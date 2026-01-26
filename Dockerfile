@@ -45,3 +45,5 @@ printf \"[supervisord]\nnodaemon=true\nuser=root\nlogfile=/tmp/supervisord.log\n
 # 6. 设置权限并启动\n\
 chmod -R 777 \"\${USER_HOME}\"\n\
 exec /bin/supervisord -c \"\${BOOT_DIR}/supervisord.conf\"\n" > /entrypoint_custom.sh && chmod +x /entrypoint_custom.sh
+# 确保使用绝对路径，并且没有被 CMD 覆盖
+ENTRYPOINT ["/bin/bash", "/entrypoint_custom.sh"]
