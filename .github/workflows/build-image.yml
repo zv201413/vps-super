@@ -28,7 +28,7 @@ jobs:
           context: .
           push: true
           # 建议镜像名也改成 zvps，保持一致
-          tags: ghcr.io/${{ github.repository_owner }}/zvps:latest
+          tags: ghcr.io/${{ github.repository_owner }}/zvps:26.01.29
 
       # --- 下面是可选的“自动通知更新”步骤 (如果你配置了 CF_API) ---
       # 如果你不想手动 restage，可以研究添加 CF CLI 的 Action
