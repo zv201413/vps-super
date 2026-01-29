@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
     tzdata vim net-tools unzip iputils-ping telnet git iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. 预装工具：Cloudflared 和 ttyd
+# 3. 安装工具：Cloudflared 和 ttyd
 RUN curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
     && dpkg -i cloudflared.deb \
     && rm cloudflared.deb \
@@ -21,12 +21,9 @@ RUN curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/r
     && chmod +x /usr/local/bin/ttyd
 
 # 4. SSH 基础配置
-RUN mkdir -p /run/sshd && \
-    sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config && \
-    sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config && \
-    ssh-keygen -A
+RUN mkdir -p /run/sshd && ssh-keygen -A
 
-# 5. 写入完整的 Supervisord 配置 (支持 sctl 通讯)
+# 5. 写入完整的 Supervisord 配置 (移除 cloudflared 自动启动)
 RUN echo "[unix_http_server]\n\
 file=/var/run/supervisor.sock\n\
 chmod=0770\n\
@@ -46,10 +43,6 @@ serverurl=unix:///var/run/supervisor.sock\n\
 \n\
 [program:sshd]\n\
 command=/usr/sbin/sshd -D\n\
-autorestart=true\n\
-\n\
-[program:cloudflared]\n\
-command=bash -c \"/usr/bin/cloudflared tunnel --no-autoupdate run --token \${CF_TOKEN}\"\n\
 autorestart=true\n\
 \n\
 [program:ttyd]\n\
