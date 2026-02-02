@@ -12,6 +12,9 @@ SSH_USER: 你的用户名
 SSH_PWD: 你的密码
 
 不设置 SSH_CMD，不挂载存储。
+<img width="1141" height="467" alt="image" src="https://github.com/user-attachments/assets/d1602ddb-252e-4e56-bef2-e8e6e957a362" />
+
+
 
 ## 步骤 2：准备持久化“大脑”
 
@@ -45,7 +48,11 @@ autorestart=true
 
 ## 步骤 4：挂载存储：将持久化卷挂载到 /home/zv/boot。
 
-设置变量：添加 SSH_CMD = /usr/bin/supervisord -n -c /home/zv/boot/supervisord.conf。或者如果平台支持且你想用 Arguments，填 ["supervisord", "-n", "-c", "/home/zv/boot/supervisord.conf"]
+设置变量：添加 SSH_CMD = /usr/bin/supervisord -n -c /home/zv/boot/supervisord.conf。
+<img width="1143" height="564" alt="image" src="https://github.com/user-attachments/assets/1bc77532-93f6-4f81-b8e1-f268004cd485" />
+
+或者如果平台支持且你想用 Arguments，填 ["supervisord", "-n", "-c", "/home/zv/boot/supervisord.conf"]
+<img width="606" height="227" alt="image" src="https://github.com/user-attachments/assets/3c1f054e-2aa4-415e-9baa-398ff893e911" />
 
 重启容器
 
