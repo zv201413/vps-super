@@ -1,103 +1,78 @@
-# 🚀 ZVPS-Super 基础镜像
+# 🚀 ZVPS-Super 2026 增强版
 
-基于 Ubuntu 的通用型容器基础镜像。支持通过环境变量动态接管启动进程，结合 Supervisor 实现多服务保活与持久化存储。
+基于 Ubuntu 的智能型容器基础镜像。支持通过环境变量动态接管启动进程，结合 Supervisor 实现多服务保活、**全自动配置初始化**与持久化存储。
 
 ---
 
 ## 🛠️ 拉取镜像后的操作流程
 
 > [!IMPORTANT]
-> **注意执行步骤：** 最初一定不要挂载永久化存储位置，也请勿设置 `SSH_CMD`。
+> **新版核心改进：** 镜像已集成“智能引导”脚本。首次部署时**推荐直接挂载存储**并设置变量，系统会自动完成所有初始化工作，无需再手动执行 `mkdir` 或 `cp`。
 
-### 步骤 1：初次启动（默认模式）
+### 步骤 1：一站式环境配置
 
-#### 1、设置环境变量
-如果你现在刚拉取镜像，请先在平台（Zeabur、koyeb 等）仅设置基础环境变量：
+在平台（Zeabur、Koyeb 等）部署时，请完成以下设置：
 
-* **SSH_USER**: 你的用户名
-* **SSH_PWD**: 你的密码
-* **CF_TOKEN**: 见下文说明
+#### 1. 设置环境变量
+* **SSH_USER**: 你的用户名（默认 `zv`）
+* **SSH_PWD**: 你的登录密码
+* **CF_TOKEN**: (可选) 填入 Cloudflare Tunnel Token 以开启域名访问
+* **SSH_CMD**: (选填) 若需完全接管启动指令，建议填写：
+  `/usr/bin/supervisord -n -c /home/zv/boot/supervisord.conf`
 
-#### 2、开端口
-* 设置 TCP 端口为 `22`（一定要打开外部可访问）
-  <img width="1194" height="340" alt="image" src="https://github.com/user-attachments/assets/6361b40f-a977-46fc-ab91-c9e4d8e388f9" />
+#### 2. 挂载持久化存储 (Storage)
+* **挂载路径**: `/home/zv/boot`
+* **说明**: 只要挂载了此路径，脚本启动时若检测到目录为空，会自动将镜像内置的“满血版”配置模板初始化到该目录下。
 
-* 设置 HTTP 端口为 `7681`
-
-#### 说明
-1、**Web SSH / ttyd**: 如果你的平台没有 Web 端 SSH，或者你想体验 Web 版终端：打开外部访问端口 `7681`，访问生成的链接即可。
-<img width="1322" height="301" alt="image" src="https://github.com/user-attachments/assets/efb63767-7151-4efd-8cdf-7613d9f5e556" />
-
-2、**CF_TOKEN**: （如果你需要本地终端/第三方软件 SSH 登录）填入隧道 Token。用法见“写在最后”
-> [!IMPORTANT]
-> 请确保 Cloudflare 后台设置的服务类型为 "SSH"，Hostname 绑定你的域名。
-<img width="1126" height="299" alt="image" src="https://github.com/user-attachments/assets/1f8ac238-bafe-46c6-87dd-1df424aed195" />
+#### 3. 开放端口
+* **TCP 22**: SSH 服务端口。
+* **HTTP 7681**: 内置 Web 终端 (ttyd)。
 
 ---
 
-### 步骤 2：准备持久化“大脑”
+### 步骤 2：验证与管理
 
-通过平台自带的 Web 终端连入容器，手动创建 `boot` 目录：
+容器部署完成后，你将获得一个开箱即用的 VPS 环境：
 
-```bash
-mkdir -p /home/zv/boot
-
-随后将系统默认的 Supervisor 配置拷贝出来作为模板（或者直接参考步骤 3 手动创建）
-
-Bash
-sudo cp /etc/supervisor/supervisord.conf /home/zv/boot/supervisord.conf
-```
-### 步骤 3（可选）：配置持久化文件
-编辑 /home/zv/boot/supervisord.conf，确保包含基础服务：
-
-```Ini, TOML
-[supervisord]
-nodaemon=true
-user=root
-
-[program:sshd]
-command=/usr/sbin/sshd -D
-autostart=true
-autorestart=true
-
-[program:ttyd]
-command=/usr/local/bin/ttyd -W bash
-autostart=true
-autorestart=true
-
-[program:cloudflare]
-# 镜像已集成智能探测：若环境变量无 CF_TOKEN，系统启动时将自动屏蔽此块
-command=cloudflared tunnel --no-autoupdate run --token %(ENV_CF_TOKEN)s
-autostart=true
-autorestart=true
-```
-### 步骤 4：启用基础模式
-挂载存储：将持久化卷挂载到 /home/zv/boot。
-
-设置启动变量：添加环境变量 SSH_CMD = /usr/bin/supervisord -n -c /home/zv/boot/supervisord.conf。
-
-<img width="1357" height="551" alt="image" src="https://github.com/user-attachments/assets/e394f4cd-f2df-4b2e-bc62-133cdcbd7c2b" />
+1. **快捷命令**: 镜像已全局内置 `sctl` 软链接。进入终端后，直接输入 `sctl` 即可查看所有进程状态（无需 sudo）。
+2. **智能探测**: 
+   - 若设置了 `CF_TOKEN`，Cloudflare 隧道将自动启动。
+   - 若未设置，脚本会自动在配置文件中注释掉相关条目，确保 `sctl` 列表中环境纯净且不报错。
 
 
-> [!TIP]
-> 如果平台支持且你想用 Arguments，可填写：["supervisord", "-n", "-c", "/home/zv/boot/supervisord.conf"]
 
-<img width="606" height="227" alt="image" src="https://github.com/user-attachments/assets/3c1f054e-2aa4-415e-9baa-398ff893e911" />
+---
 
-重启容器：完成最后部署。
+### 步骤 3：进阶配置持久化
 
-💡 写在最后
-* **Web 终端支持**:本镜像集成 ttyd。如果你习惯用ttyd代替平台自带 Web 登录，请确保 7681 端口已映射。 
-* **强烈推荐：WindTerm (媲美 FinalShell，免手动转发)**:
-  1. **配置环境变量**：下载`cloudflared.exe`，并将其所在目录（如 C:\btp-tool）添加到系统【环境变量-Path】中。
-  2. **配置 WindTerm**：新建会话 -> 在左侧【会话】栏找到【连接】 -> 【代理】 -> 【类型】选择【自定义命令】。
-  3. **输入命令**：`cloudflared access ssh --hostname 你的域名`。
-  4. **完成**：点击连接即可，WindTerm 会自动处理文件管理和监控，体验非常顺滑。
+由于配置文件已自动写入 `/home/zv/boot/supervisord.conf`：
 
-* **关于 FinalShell**:
-  由于 FinalShell 不支持自定义连接代理命令，仍需手动在 CMD 运行桥接命令后再连 localhost，建议迁移至 WindTerm 以获得更好体验。
+* **自定义服务**: 你可以随时编辑该文件，添加如 `xray`、`gost` 等自定义进程。
+* **即时生效**: 修改文件后，在终端执行 `sctl update` 即可热加载配置，无需重启容器。
+* **永久保留**: 即使镜像更新或容器销毁，只要持久化卷还在，你的所有配置和服务改动都会在下次启动时自动恢复。
 
-* **用户名适配**: 以上流程演示中使用默认的 zv 用户名，请根据你个人设置的 SSH_USER 修改路径。
+---
 
-🤝 鸣谢
-本项目参考了 vevc/ubuntu 大佬的设计思路，并针对数据持久化、Supervisor 智能启动及 ttyd 集成等场景进行了优化与补充。
+## 💡 技巧与鸣谢
+
+* **Web 终端支持**: 本镜像集成 `ttyd`。如果你不想使用平台自带终端，访问 `http://你的IP或域名:7681` 即可登录。
+* **WindTerm 推荐**:
+  1. 系统 Path 添加 `cloudflared.exe`。
+  2. WindTerm 新建会话 -> 代理 -> 类型选择【自定义命令】。
+  3. 输入：`cloudflared access ssh --hostname 你的域名`。
+  * *WindTerm 会自动处理文件同步与终端监控，是本镜像的最佳拍档。*
+
+---
+
+## 💡 流程总结
+
+填变量：SSH_PWD、CF_TOKEN。
+
+挂存储：添加 Storage 挂载到 /home/zv/boot。
+
+点部署：不用管 SSH_CMD。
+
+进终端：/home/zv/boot/supervisord.conf 已经存在，且 sctl 已经接管了所有服务。
+
+**🤝 鸣谢**
+本项目参考了 vevc/ubuntu 的设计思路，并针对 Zeabur/Koyeb 等平台的持久化存储、Supervisor 智能初始化及 ttyd 交互体验进行了深度优化。
