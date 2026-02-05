@@ -1,9 +1,9 @@
+
 name: Build and Push to GHCR
 
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # 允许手动触发构建
 
 jobs:
   build-and-push:
@@ -16,24 +16,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. 确保脚本权限和文件存在
-      - name: Prepare environment
-        run: |
-          if [ ! -f "entrypoint.sh" ]; then
-            echo "❌ 错误: 根目录下未找到 entrypoint.sh"
-            exit 1
-          fi
-          chmod +x entrypoint.sh
-          echo "✅ 脚本权限设置完成"
-
-      # 2. 自动生成版本号
+      # 1. 自动生成版本号
       - name: Set Image Tag
         id: vars
         run: |
-          # 生成格式：20260205-shortsha
+          # 生成格式：年月日-短哈希 (例如 20260201-7b3a4e2)
           echo "tag=$(date +'%Y%m%d')-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-
-      # 3. 登录到 GitHub Container Registry
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -41,22 +29,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4. 构建并推送镜像
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 动态标签：latest 方便快速更新，日期标签方便版本回滚
+          # 动态标签：同时推送到最新版和具体的版本号
           tags: |
-            ghcr.io/${{ github.repository_owner }}/zvps_test:latest
-            ghcr.io/${{ github.repository_owner }}/zvps_test:${{ steps.vars.outputs.tag }}
-
-      # 5. 在控制台打印构建信息
+            ghcr.io/${{ github.repository_owner }}/zvps:latest
+            ghcr.io/${{ github.repository_owner }}/zvps:${{ steps.vars.outputs.tag }}
+      # 2. 在控制台打印出来，方便你去 Zeabur 复制版本号
       - name: Image info
         run: |
-          echo "🎉 镜像构建成功并已推送到 GHCR！"
-          echo "-------------------------------------"
-          echo "最新标签: ghcr.io/${{ github.repository_owner }}/zvps_test:latest"
-          echo "版本标签: ghcr.io/${{ github.repository_owner }}/zvps_test:${{ steps.vars.outputs.tag }}"
-          echo "-------------------------------------"
+          echo "镜像构建完成！"
+          echo "版本标签为: ${{ steps.vars.outputs.tag }}"
