@@ -39,7 +39,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/zvps:latest
             ghcr.io/${{ github.repository_owner }}/zvps:${{ steps.vars.outputs.tag }}
 
-      # 2. 在控制台打印出来，方便你去 Zeabur 复制版本号
+      # 2. 在控制台打印出来，方便复制版本号
       - name: Image info
         run: |
           echo "镜像构建完成！"
