@@ -1,3 +1,4 @@
+#!/usr/bin/env sh
 set -e
 
 # --- 1. 设置默认值 ---
