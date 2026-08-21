@@ -32,6 +32,15 @@ RUN curl -L https://github.com/apernet/hysteria/releases/latest/download/hysteri
         -o /usr/local/bin/hysteria \
     && chmod +x /usr/local/bin/hysteria
 
+# 3c-2. 安装 EasyTier 核心 (异地组网: UDP 打洞 P2P, TCP/WS/WSS 兜底)
+RUN curl -L https://github.com/EasyTier/EasyTier/releases/download/v2.6.4/easytier-linux-x86_64-v2.6.4.zip \
+        -o /tmp/et.zip \
+    && unzip -q /tmp/et.zip -d /tmp/et \
+    && find /tmp/et -name 'easytier-core' -exec mv {} /usr/local/bin/ \; \
+    && find /tmp/et -name 'easytier-cli'  -exec mv {} /usr/local/bin/ \; \
+    && chmod +x /usr/local/bin/easytier-core /usr/local/bin/easytier-cli \
+    && rm -rf /tmp/et /tmp/et.zip
+
 # 3d. 安装 opencode CLI
 RUN curl -fsSL https://opencode.ai/install.sh | bash
 

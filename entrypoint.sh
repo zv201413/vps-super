@@ -148,7 +148,7 @@ else
 fi
 
 # 生成指纹
-FINGERPRINT="USER:$USER_NAME|P1:$P1_PORT|P2:${P2_PORT:-none}|CF:${CF_TOKEN:-none}|KPAL:${KPAL:-none}|HYP2P:${HYP2P:-none}|RV:${HYP2P_RV:-public}|SBP2P:${SBP2P:-none}"
+FINGERPRINT="USER:$USER_NAME|P1:$P1_PORT|P2:${P2_PORT:-none}|CF:${CF_TOKEN:-none}|KPAL:${KPAL:-none}|HYP2P:${HYP2P:-none}|RV:${HYP2P_RV:-public}|SBP2P:${SBP2P:-none}|ET:${ET:-none}|ETP:${ET_PEERS:-none}|ETM:${ET_MODE:-auto}|ETA:${ET_ARGS:-none}"
 
 # --- 5. 保活脚本生成 ---
 if [ -n "$KPAL" ]; then
@@ -465,6 +465,121 @@ if [ -n "$SBP2P" ]; then
         echo " pinSHA256  : $SB_PIN"
         echo " Server cfg : cat $P2P_DIR/sb-config.json"
         echo " Client cfg : cat $P2P_DIR/sb-client.json"
+        echo "========================================"
+    fi
+    set -e
+fi
+
+# --- 9. ET: EasyTier 异地组网 ---
+# 格式: ET=<监听端口>:<网络名>:<密钥>:<虚拟IP>
+#   监听端口 : udp/tcp 用该端口, ws 用 +1, wss 用 +2 (默认 11010/11011/11012)
+#              UDP 用于打洞直连, TCP/WS/WSS 在 UDP 被封时兜底
+#   网络名   : 必填, 同一组网的所有节点必须一致
+#   密钥     : 必填, 同一组网的所有节点必须一致
+#   虚拟IP   : 可空, 留空则 --dhcp 自动分配 (从 10.0.0.1 起)
+#   注意: 前四段用冒号分隔, 故网络名与密钥不能含冒号
+# 对端节点: ET_PEERS="udp://主机:11010,tcp://主机:11010,ws://主机:11011"
+#           同一主机写多种协议即为兜底链: UDP 打不通自动落到 TCP, 再落到 WS
+# 其他: ET_MODE=auto|tun|notun (默认 auto, 自动探测 TUN 可用性)
+#       ET_ARGS=追加的原生 easytier-core 参数 (逃生阀, 勿重复上面已设的参数)
+if [ -n "$ET" ]; then
+    set +e   # 组网初始化为 best-effort: 失败不应拖垮 sshd/ttyd 等其他服务
+    ET_PORT=$(printf '%s' "$ET" | cut -d: -f1)
+    ET_NET=$(printf '%s' "$ET" | cut -d: -s -f2)
+    ET_SEC=$(printf '%s' "$ET" | cut -d: -s -f3)
+    ET_VIP=$(printf '%s' "$ET" | cut -d: -s -f4)
+
+    echo "$ET_PORT" | grep -qE '^[0-9]+$' || ET_PORT=11010
+
+    if [ -z "$ET_NET" ] || [ -z "$ET_SEC" ]; then
+        echo "⚠️ ET 已设置但网络名或密钥为空 → 跳过异地组网"
+        echo "   正确格式: ET=<监听端口>:<网络名>:<密钥>:<虚拟IP>  (虚拟IP 可省略)"
+    else
+        # 1) TUN 可用性探测: 设备节点 + NET_ADMIN 能力
+        #    只看 /dev/net/tun 存在是不够的 —— 缺 NET_ADMIN 时 TUNSETIFF 仍会失败,
+        #    而绝大多数免费 PaaS 恰好是「节点在、能力无」, 故必须查 CapEff 第 12 位
+        et_tun_ok() {
+            if [ ! -c /dev/net/tun ]; then
+                mkdir -p /dev/net 2>/dev/null
+                mknod /dev/net/tun c 10 200 2>/dev/null
+                chmod 600 /dev/net/tun 2>/dev/null
+            fi
+            [ -c /dev/net/tun ] || return 1
+            _cap=$(grep -m1 '^CapEff:' /proc/self/status 2>/dev/null | tr -d '\t ' | cut -d: -f2)
+            [ -n "$_cap" ] || return 1
+            [ "$(( (0x$_cap >> 12) & 1 ))" = "1" ] || return 1
+            return 0
+        }
+
+        case "${ET_MODE:-auto}" in
+            tun)   ET_USE_TUN=1 ;;
+            notun) ET_USE_TUN=0 ;;
+            *)     if et_tun_ok; then ET_USE_TUN=1; else ET_USE_TUN=0; fi ;;
+        esac
+
+        if [ "$ET_USE_TUN" = "1" ]; then
+            ET_TUN_ARGS=""
+            ET_TUN_DESC="TUN 模式 (完整三层互通)"
+        else
+            # 无 TUN: 靠 smoltcp 用户态栈, 远端仍可访问本容器服务
+            ET_TUN_ARGS="--no-tun --use-smoltcp"
+            ET_TUN_DESC="无 TUN 模式 (smoltcp 用户态栈)"
+        fi
+
+        # 2) 虚拟 IP: 显式指定优先, 否则 dhcp 自动分配
+        if [ -n "$ET_VIP" ]; then
+            ET_IP_ARG="-i $ET_VIP"
+        else
+            ET_IP_ARG="--dhcp"
+        fi
+
+        # 3) 监听器: 四协议全开, 让对端可用任意协议接入本节点
+        ET_WS_PORT=$((ET_PORT + 1))
+        ET_WSS_PORT=$((ET_PORT + 2))
+        ET_LISTEN_ARGS="-l udp://0.0.0.0:$ET_PORT -l tcp://0.0.0.0:$ET_PORT"
+        ET_LISTEN_ARGS="$ET_LISTEN_ARGS -l ws://0.0.0.0:$ET_WS_PORT -l wss://0.0.0.0:$ET_WSS_PORT"
+
+        # 4) 对端节点: 逗号或空格分隔都接受
+        #    (EasyTier 原生 ET_PEERS 只认逗号, 空格会静默解析成 0 条, 这里放宽并显式转成 -p)
+        ET_PEER_ARGS=""
+        ET_PEER_N=0
+        if [ -n "$ET_PEERS" ]; then
+            for _u in $(printf '%s' "$ET_PEERS" | tr ',' ' '); do
+                ET_PEER_ARGS="$ET_PEER_ARGS -p $_u"
+                ET_PEER_N=$((ET_PEER_N + 1))
+            done
+        fi
+
+        # 5) 生成启动包装脚本
+        #    走包装脚本而非 sed 渲染模板: peer URI 含 / 与可能的 &, 直接 sed 替换要多层转义
+        ET_CMD="/usr/local/bin/easytier-core --network-name '$ET_NET' --network-secret '$ET_SEC'"
+        ET_CMD="$ET_CMD $ET_IP_ARG $ET_LISTEN_ARGS $ET_PEER_ARGS $ET_TUN_ARGS"
+        ET_CMD="$ET_CMD --rpc-portal 127.0.0.1:15888 --console-log-level info"
+        [ -n "$ET_ARGS" ] && ET_CMD="$ET_CMD $ET_ARGS"
+
+        {
+            echo '#!/bin/sh'
+            echo '# 由 entrypoint.sh 自动生成, 每次配置变更时重写, 请勿手改'
+            echo "exec $ET_CMD"
+        } > /usr/local/bin/easytier-run.sh
+        chmod +x /usr/local/bin/easytier-run.sh
+
+        # 6) 投放 supervisord 片段
+        cp /usr/local/etc/fragments/easytier.conf "$SYS_CONF_DIR/"
+
+        echo "========================================"
+        echo " EasyTier 异地组网已启用"
+        echo " 网络名     : $ET_NET"
+        echo " 运行模式   : $ET_TUN_DESC"
+        echo " 本节点 IP  : ${ET_VIP:-dhcp 自动分配}"
+        echo " 监听端口   : udp/tcp $ET_PORT | ws $ET_WS_PORT | wss $ET_WSS_PORT"
+        if [ "$ET_PEER_N" -gt 0 ]; then
+            echo " 对端节点   : $ET_PEER_N 个"
+        else
+            echo " 对端节点   : 未设置 ET_PEERS → 仅能发现同局域网节点, 异地组网需填"
+        fi
+        echo " 查看状态   : easytier-cli peer / easytier-cli route"
+        echo " 运行日志   : tail -f /var/log/easytier.err.log"
         echo "========================================"
     fi
     set -e
