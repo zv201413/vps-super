@@ -580,6 +580,15 @@ if [ -n "$ET" ]; then
         fi
         echo " 查看状态   : easytier-cli peer / easytier-cli route"
         echo " 运行日志   : tail -f /var/log/easytier.err.log"
+        if [ -n "$CF_TOKEN" ]; then
+            echo " ---------- 经 Cloudflare 隧道让对端连进来 (免入站端口) ----------"
+            echo " 在 CF 面板给本隧道加一条 Public Hostname:"
+            echo "   类型 HTTP → Service 填 http://localhost:$ET_WS_PORT   (推荐)"
+            echo "   对端 ET_PEERS 填 wss://<子域>.<你的域>:443"
+            echo "   TLS 由 CF 边缘提供, 故容器内监听明文 ws, 对端用 wss 连 —— 这是官方支持的组合"
+            echo " 若类型选 TCP → Service 填 tcp://localhost:$ET_PORT,"
+            echo "   但对端必须先跑 cloudflared access tcp 做本地转发, 比 HTTP 麻烦"
+        fi
         echo "========================================"
     fi
     set -e
