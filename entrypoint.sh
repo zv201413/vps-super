@@ -3,13 +3,7 @@ set -e
 
 # --- 1. 设置默认值 ---
 USER_NAME=${SSH_USER:-zv}
-USER_PWD=${SSH_PWD:-}
-if [ -z "$USER_PWD" ]; then
-    # 镜像是公开的, 这里不能写死口令 —— 否则等于把 sshd 的密码一起发布。
-    # 没给就随机生成, 只出现在本次日志里 (要固定就在部署时设 SSH_PWD)。
-    USER_PWD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)
-    echo "⚠️ 未提供 SSH_PWD, 已随机生成: $USER_PWD"
-fi
+USER_PWD=${SSH_PWD:-pwd123}
 
 echo "👤 当前用户: $USER_NAME"
 

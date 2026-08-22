@@ -1,13 +1,13 @@
 FROM ubuntu:22.04
 
 # 1. 基础环境设置
-#    SSH_PWD 保留为变量但不带默认值 —— 镜像是公开的, 在这里写死口令等于把
-#    sshd 的密码一起发布。部署时用环境变量提供; 不提供则由 entrypoint 随机
-#    生成并打到日志里。
+#    SSH_PWD 是镜像内置的默认口令。镜像公开, 故此值等同公开 ——
+#    sshd 的 22 端口在 CF 上不对外路由(只有 $PORT 走公网), 所以实际暴露面有限;
+#    但若给 22 配了 TCP Proxy, 就必须在部署时用环境变量覆盖掉它。
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
     SSH_USER=zv \
-    SSH_PWD=
+    SSH_PWD=pwd123
 
 # 2. 安装必要软件包
 RUN apt-get update && apt-get install -y \
