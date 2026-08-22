@@ -1,10 +1,13 @@
 FROM ubuntu:22.04
 
-# 1. 基础环境设置 (保持默认值 zv/105106)
+# 1. 基础环境设置
+#    SSH_PWD 保留为变量但不带默认值 —— 镜像是公开的, 在这里写死口令等于把
+#    sshd 的密码一起发布。部署时用环境变量提供; 不提供则由 entrypoint 随机
+#    生成并打到日志里。
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
     SSH_USER=zv \
-    SSH_PWD=105106
+    SSH_PWD=
 
 # 2. 安装必要软件包
 RUN apt-get update && apt-get install -y \
