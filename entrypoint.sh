@@ -148,7 +148,7 @@ else
 fi
 
 # 生成指纹
-FINGERPRINT="USER:$USER_NAME|P1:$P1_PORT|P2:${P2_PORT:-none}|CF:${CF_TOKEN:-none}|KPAL:${KPAL:-none}|HYP2P:${HYP2P:-none}|RV:${HYP2P_RV:-public}|SBP2P:${SBP2P:-none}|ET:${ET:-none}|ETP:${ET_PEERS:-none}|ETM:${ET_MODE:-auto}|ETA:${ET_ARGS:-none}"
+FINGERPRINT="USER:$USER_NAME|P1:$P1_PORT|P2:${P2_PORT:-none}|CF:${CF_TOKEN:-none}|KPAL:${KPAL:-none}|HYP2P:${HYP2P:-none}|RV:${HYP2P_RV:-public}|SBP2P:${SBP2P:-none}|ET:${ET:-none}|ETP:${ET_PEERS:-none}|ETM:${ET_MODE:-auto}|ETA:${ET_ARGS:-none}|PU:${PUNCH:-none}|ETAN:${ET_ANNOUNCE_IP:-1}|ETMP:${ET_MAPPED:-auto}"
 
 # --- 5. 保活脚本生成 ---
 if [ -n "$KPAL" ]; then
@@ -482,6 +482,24 @@ fi
 #           同一主机写多种协议即为兜底链: UDP 打不通自动落到 TCP, 再落到 WS
 # 其他: ET_MODE=auto|tun|notun (默认 auto, 自动探测 TUN 可用性)
 #       ET_ARGS=追加的原生 easytier-core 参数 (逃生阀, 勿重复上面已设的参数)
+#
+# --- 打洞相关 (Symmetric ↔ PortRestricted 这类 EasyTier 自己打不通的组合) ---
+# ET_ANNOUNCE_IP=1|0  默认 1。启动时自测本节点 UDP 出口地址, 并把出口 IP 写进
+#                     EasyTier hostname 后缀 `-ip-a-b-c-d` 广播给对端。
+#                     这是对端 punchd 唯一能拿到「该往哪个 IP 扫射」的途径 ——
+#                     EasyTier 的 peer/route 都不含对端公网端点字段。
+#                     容器出口 IP 每次重启都可能变 (实测 CF 换 cell 就换 IP),
+#                     所以必须动态广播而不是写死。
+# ET_MAPPED=auto|<IP:端口>|0
+#                     默认 auto: 用自测到的出口地址生成 --mapped-listeners,
+#                     告诉对端「来这个 UDP 端点找我」。仅在设了 PUNCH 时才加
+#                     (需要被扫射一侧才需要公布端点)。
+#                     自测判出 Symmetric 映射时端口不可信, 退回本地端口。
+# PUNCH=auto[:端口[:间隔]] | <对端IP>[:端口[:间隔]]
+#                     启用 UDP 打洞守护 (缺 UDP 时做「停 ET → 全端口扫射 → 起 ET」
+#                     的授权接力)。auto = 对端 IP 从 peer hostname 自动学, 推荐;
+#                     端口默认取上面的 ET 监听端口, 间隔默认 60s。
+#                     原理与坑点见 README「异地组网 (ET) 详解 → UDP 打洞」。
 if [ -n "$ET" ]; then
     set +e   # 组网初始化为 best-effort: 失败不应拖垮 sshd/ttyd 等其他服务
     ET_PORT=$(printf '%s' "$ET" | cut -d: -f1)
@@ -550,10 +568,46 @@ if [ -n "$ET" ]; then
             done
         fi
 
-        # 5) 生成启动包装脚本
+        # 5) 出口地址自测 → hostname 广播 + mapped-listeners
+        #    此刻 easytier 还没起, ET_PORT 空着, 所以能绑它去问 STUN,
+        #    问出来的映射才是这条链路真实的 (换端口问等于问了另一条)
+        ET_PUB_IP=""; ET_PUB_PORT=""; ET_PUB_KIND=""
+        ET_HOST_ARG=""; ET_MAP_ARG=""
+        if [ "${ET_ANNOUNCE_IP:-1}" = "1" ]; then
+            _addr=$(python3 /usr/local/bin/etaddr.py "$ET_PORT" 2>/dev/null)
+            ET_PUB_IP=$(printf '%s' "$_addr" | awk '{print $1}')
+            ET_PUB_PORT=$(printf '%s' "$_addr" | awk '{print $2}')
+            ET_PUB_KIND=$(printf '%s' "$_addr" | awk '{print $3}')
+        fi
+        if [ -n "$ET_PUB_IP" ]; then
+            # hostname = <基名>-ip-a-b-c-d。用连字符而不是点: EasyTier 的 magic dns
+            # 会把 hostname 当域名标签 (<hostname>.et.net), 含点会被切碎
+            _hb=$(printf '%s' "${ET_HOSTNAME:-$(cat /etc/hostname 2>/dev/null || echo node)}" \
+                  | cut -c1-20 | sed 's/[^A-Za-z0-9-]/-/g')
+            ET_HOST_ARG="--hostname ${_hb}-ip-$(printf '%s' "$ET_PUB_IP" | tr '.' '-')"
+        fi
+        if [ -n "$PUNCH" ] && [ "${ET_MAPPED:-auto}" != "0" ]; then
+            case "${ET_MAPPED:-auto}" in
+                auto)
+                    if [ -n "$ET_PUB_IP" ]; then
+                        # Symmetric 的映射端口随目标变化, 公布出去只会误导对端 → 退回本地端口
+                        if [ "$ET_PUB_KIND" = "cone" ]; then
+                            _mp=$ET_PUB_PORT
+                        else
+                            _mp=$ET_PORT
+                        fi
+                        ET_MAP_ARG="--mapped-listeners udp://$ET_PUB_IP:$_mp"
+                    fi
+                    ;;
+                *) ET_MAP_ARG="--mapped-listeners udp://${ET_MAPPED}" ;;
+            esac
+        fi
+
+        # 6) 生成启动包装脚本
         #    走包装脚本而非 sed 渲染模板: peer URI 含 / 与可能的 &, 直接 sed 替换要多层转义
         ET_CMD="/usr/local/bin/easytier-core --network-name '$ET_NET' --network-secret '$ET_SEC'"
         ET_CMD="$ET_CMD $ET_IP_ARG $ET_LISTEN_ARGS $ET_PEER_ARGS $ET_TUN_ARGS"
+        ET_CMD="$ET_CMD $ET_HOST_ARG $ET_MAP_ARG"
         ET_CMD="$ET_CMD --rpc-portal 127.0.0.1:15888 --console-log-level info"
         [ -n "$ET_ARGS" ] && ET_CMD="$ET_CMD $ET_ARGS"
 
@@ -564,8 +618,23 @@ if [ -n "$ET" ]; then
         } > /usr/local/bin/easytier-run.sh
         chmod +x /usr/local/bin/easytier-run.sh
 
-        # 6) 投放 supervisord 片段
+        # 7) 投放 supervisord 片段
         cp /usr/local/etc/fragments/easytier.conf "$SYS_CONF_DIR/"
+
+        # 8) 打洞守护: 只在设了 PUNCH 时才投放
+        #    PUNCH 里没有任何密钥, 可以安全地写进包装脚本
+        if [ -n "$PUNCH" ]; then
+            {
+                echo '#!/bin/sh'
+                echo '# 由 entrypoint.sh 自动生成, 请勿手改'
+                echo "PUNCH='$PUNCH'"
+                echo "PUNCH_PORT=$ET_PORT"
+                echo 'export PUNCH PUNCH_PORT'
+                echo 'exec /usr/local/bin/punchd.sh'
+            } > /usr/local/bin/punchd-run.sh
+            chmod +x /usr/local/bin/punchd-run.sh
+            cp /usr/local/etc/fragments/punchd.conf "$SYS_CONF_DIR/"
+        fi
 
         echo "========================================"
         echo " EasyTier 异地组网已启用"
@@ -577,6 +646,20 @@ if [ -n "$ET" ]; then
             echo " 对端节点   : $ET_PEER_N 个"
         else
             echo " 对端节点   : 未设置 ET_PEERS → 仅能发现同局域网节点, 异地组网需填"
+        fi
+        if [ -n "$ET_PUB_IP" ]; then
+            echo " 出口地址   : $ET_PUB_IP:$ET_PUB_PORT (映射类型 $ET_PUB_KIND)"
+            echo " 广播给对端 : ${ET_HOST_ARG#--hostname }  ← 对端 punchd 据此扫射本节点"
+        elif [ "${ET_ANNOUNCE_IP:-1}" = "1" ]; then
+            echo " 出口地址   : ⚠️ 自测失败 (STUN 与 HTTP 都不通) → 未广播, 对端无法自动打洞"
+        else
+            echo " 出口地址   : 已由 ET_ANNOUNCE_IP=0 关闭自测与广播"
+        fi
+        [ -n "$ET_MAP_ARG" ] && echo " 公布端点   : ${ET_MAP_ARG#--mapped-listeners }"
+        if [ -n "$PUNCH" ]; then
+            echo " UDP 打洞   : 已启用 (PUNCH=$PUNCH)"
+            echo "              日志 tail -f /var/log/punchd.out.log"
+            echo "              对端也要跑本镜像并设 PUNCH, 或至少开着 ET_ANNOUNCE_IP"
         fi
         echo " 查看状态   : easytier-cli peer / easytier-cli route"
         echo " 运行日志   : tail -f /var/log/easytier.err.log"

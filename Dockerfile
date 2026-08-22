@@ -10,8 +10,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     SSH_PWD=pwd123
 
 # 2. 安装必要软件包
+#    python3 是 supervisor 的依赖, 本来就会被拉进来; 这里显式写出, 因为
+#    打洞脚本 (sweep.py / etaddr.py / punchd.sh 里的解析) 直接依赖它
 RUN apt-get update && apt-get install -y \
-    openssh-server supervisor curl wget sudo ca-certificates openssl \
+    openssh-server supervisor python3 curl wget sudo ca-certificates openssl \
     tzdata vim net-tools unzip iputils-ping telnet git iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -65,6 +67,13 @@ COPY fragments /usr/local/etc/fragments
 # 拷贝动态处理逻辑的启动脚本
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 拷贝 UDP 打洞工具 (仅在设了 PUNCH 时才由 entrypoint 拉起, 平时不占资源)
+#   etaddr.py —— STUN 自测本节点 UDP 出口 IP/映射端口, 供广播与 mapped-listeners
+#   sweep.py  —— 全端口预授权扫射, 与 docker-ocr-mesh 里的同一份, 改动请两边同步
+#   punchd.sh —— 守护: 缺 UDP 就做「停 ET → 扫射 → 起 ET」的授权接力
+COPY etaddr.py sweep.py punchd.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/etaddr.py /usr/local/bin/sweep.py /usr/local/bin/punchd.sh
 
 # 移除系统默认配置，确保只走持久化卷里的配置
 RUN rm -f /etc/supervisor/supervisord.conf

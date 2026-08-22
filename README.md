@@ -63,8 +63,9 @@ docker run -d --name zvps \
 | **komari** | 启动时执行一次任意命令 / 安装脚本 | `KOMARI` | ⬜ OFF | — |
 | **hy2 (HYP2P)** | P2P 打洞的 Hysteria2 出站代理落地 | `HYP2P` | ⬜ OFF | 无入站（打洞） |
 | **easytier (ET)** | 异地组网：UDP 打洞 P2P，TCP/WS/WSS 兜底 | `ET` | ⬜ OFF | `11010-11012`（可改） |
+| **punchd** | UDP 打洞守护：缺 UDP 就做授权接力（Symmetric ↔ PortRestricted 专用） | `PUNCH` | ⬜ OFF | — |
 
-镜像 `EXPOSE 22 7681 11010-11012`；其余服务要么走出站隧道/打洞（无需入站端口），要么按你设的端口自行映射。
+镜像只 `EXPOSE 7681`（**故意只留一个**：CF 会把 `EXPOSE` 里最小的端口当作应用端口接到 `$PORT` 上，多写一个 `22` 就会把 HTTP 路由劫到 sshd 上去）。其余服务要么走出站隧道/打洞（无需入站端口），要么按你设的端口自行映射。
 
 ---
 
@@ -142,6 +143,9 @@ KOMARI=wget -qO- https://raw.githubusercontent.com/zv201413/komari-agent_new/ref
 | `ET_PEERS` | ⚠️ | 对端节点 URI，**逗号分隔**。不填也能启动，但只能发现同局域网节点 —— **异地组网必填** |
 | `ET_MODE` | ❌ | `auto`（默认，自动探测 TUN）/ `tun`（强制）/ `notun`（强制无 TUN） |
 | `ET_ARGS` | ❌ | 追加原生 `easytier-core` 参数（逃生阀），如 `--latency-first --compression zstd` |
+| `PUNCH` | ❌ | UDP 打洞守护。`auto`（推荐，对端 IP 自动学）或 `<对端公网IP>`；可带 `:<端口>:<间隔秒>`。**只在 Port-Restricted/Cone 那一侧配** |
+| `ET_ANNOUNCE_IP` | ❌ | 默认 `1`。自测本节点 UDP 出口 IP 并写进 hostname 后缀广播给对端 —— 对端 `PUNCH=auto` 靠它工作。设 `0` 关闭 |
+| `ET_MAPPED` | ❌ | 默认 `auto`（用自测到的出口地址生成 `--mapped-listeners`，仅在设了 `PUNCH` 时才加）。也可写死 `<IP:端口>`，或设 `0` 关闭 |
 
 > ⚠️ **网络名与密钥不能含冒号 `:`**（`ET` 用冒号分四段）。
 
@@ -393,7 +397,46 @@ KOMARI=bash -c 'curl -fsSL https://github.com/EasyTier/EasyTier/releases/downloa
 
 跑起来后 CF 面板照上面 ④ 配 `localhost:11011` 即可。这是应急手段：没有 supervisor 保活、进程挂了不会拉起，长期还是换新镜像用 `ET` 变量。
 
-### ⑥ 查看状态
+### ⑥ UDP 打洞（PUNCH）
+
+`peer` 表里 `tunnel` 只有 `tcp`、迟迟不出现 `udp`，而两端 `nat_type` 一个是 `Symmetric` 一个是 `PortRestricted` —— 这一对 EasyTier 自己打不通，要开 `PUNCH`。
+
+**只在 `PortRestricted`（或 Cone）那一侧加一个变量即可**：
+
+```bash
+PUNCH=auto
+```
+
+想改端口和检查间隔就写全：`PUNCH=auto:11030:30`（端口默认取 `ET` 里的监听端口，间隔默认 60 秒）。
+
+另一侧**什么都不用配**，只要别把 `ET_ANNOUNCE_IP` 关掉（默认就是开）。
+
+看效果：
+
+```bash
+tail -f /var/log/punchd.out.log     # 打洞守护日志
+easytier-cli peer                   # tunnel 列出现 udp 就是通了
+```
+
+正常日志长这样：
+
+```
+[punchd 03:13:07] 缺 UDP (tunnel=tcp), 第 1 次授权接力 → 52.139.216.172
+[punchd 03:13:14]   第1 轮 64512 端口 / 1.35s
+[punchd 03:13:15]   第2 轮 64512 端口 / 0.89s
+[punchd 03:13:15] 接力完成, EasyTier 已重启
+[punchd 03:13:35] UDP 已恢复 (tunnel=tcp,udp)
+```
+
+三件要知道的事：
+
+- **每次接力 EasyTier 会断 3～5 秒**（要腾出端口去扫射）。只在缺 UDP 时才动，通了就不再动。
+- **容器出口 IP 每次重启都会变**（实测 CF 换 cell 就换 IP），所以别用 `PUNCH=<写死的IP>` —— 那是「重启一次就永久打不通」。`auto` 就是为这个来的。
+- **对端跑旧镜像时 `auto` 用不了**，日志会提示「对端未公布出口 IP」。
+
+原理、坑点、实测吞吐数字见 [UDP 打洞原理与坑点](docs/nat-punching.md)。
+
+### ⑦ 查看状态
 
 ```bash
 easytier-cli peer     # 对端列表：隧道协议(udp/tcp/ws/wss)、p2p 还是中继、延迟、丢包
@@ -408,7 +451,7 @@ sctl status easytier  # supervisor 里的进程状态
 
 - **必须自备对端节点**：官方公共节点 `public.easytier.cn` **已无 DNS A 记录**（实测解析失败），镜像因此不内置任何默认公共节点。用你自己的公网 VPS 当节点最可靠；**两端都没有公网端口时走 [④ Cloudflare 隧道](#-用-cloudflare-隧道当入口两端都没公网端口时)**，或自行寻找可用的社区公共节点填进 `ET_PEERS`。
 - **网络名 / 密钥不能含冒号**：`ET` 靠冒号分四段。建议只用字母数字和 `-`。
-- **NAT 类型决定能否 P2P**：一端对称 NAT（随机端口）且另一端非公网/全锥型时，UDP 打洞**可能失败**，此时自动走中继（功能正常，延迟和带宽受中继节点限制）。
+- **NAT 类型决定能否 P2P**：一端对称 NAT（随机端口）且另一端非公网/全锥型时，UDP 打洞**可能失败**，此时自动走中继（功能正常，延迟和带宽受中继节点限制）。这种组合可以用 [⑥ UDP 打洞（PUNCH）](#-udp-打洞punch)强行打通。
 - **密钥即入网凭证**：任何拿到网络名 + 密钥的人都能进你的组网，请当密码对待。
 
 ---
