@@ -1,0 +1,79 @@
+#!/bin/bash
+# vps —— 一键跑 VPS 信息与测试工具箱 (zv201413/info 的 vps_info.sh), 容器里直接敲 `vps`
+#
+# **本文件 docker-ocr-mesh 与 zvps-super 各一份, 内容相同, 改动请两边同步**
+# (与 sweep.py / punchd.sh 同一约定)。
+#
+# 用法:
+#   vps               拉最新版并跑
+#   vps -l            不联网, 跑上次缓存的那份 (/tmp/vps_info.sh)
+#   vps -- <参数>     -- 之后的参数原样传给探针脚本
+#   vps -h            本说明
+#
+# **要真 tty**: 探针是菜单式的, `cf ssh <app>` 进去再敲; 别 `cf ssh <app> -T -c 'vps'`
+# (无 tty 会死循环刷「无效选择」, 本脚本已挡, 硬来加 VPS_FORCE_NOTTY=1)。
+#
+# 覆盖用的变量: VPS_INFO_URL (源地址) · VPS_INFO_CACHE (缓存落点)
+#
+# 为什么不直接写 `bash <(curl -sL URL)`:
+#   进程替换在 curl 失败时喂给 bash 一个**空文件**, bash 读完就正常退出 0 ——
+#   看上去跑完了, 其实一行都没执行, 且 $? = 0 骗过所有判断。容器所在的免费 PaaS
+#   出口本来就常限速或挡 GitHub, 这个失败模式几乎必然撞上。
+#   故改为: 先落盘 → 验 curl 退出码且文件非空 → 才交给 bash。
+#
+# 出网走代理时不必改这里: curl 自己认 ALL_PROXY / HTTPS_PROXY。
+# 容器内有 EasyTier 的 socks5(1080) 时:  ALL_PROXY=socks5h://127.0.0.1:1080 vps
+#
+# ⚠ 探针脚本自己有一段「快捷键配置」: 以 root 跑完会 `rm -f /usr/local/bin/vps`
+#   再写它自己那份简版 wrapper —— 也就是**本文件会被它顶掉**(它不认识 -l 和空文件
+#   那道防线)。这是它的既有行为, 不去对抗: 容器 restart 后镜像里这份自动回来。
+#   /usr/bin/vps 是指向 /usr/local/bin/vps 的软链, 故两条 PATH 上永远是同一份,
+#   不会出现「交互 shell 跑到一份、cf ssh -c 跑到另一份」。
+set -u
+
+URL="${VPS_INFO_URL:-https://raw.githubusercontent.com/zv201413/info/main/vps_info.sh}"
+CACHE="${VPS_INFO_CACHE:-/tmp/vps_info.sh}"
+
+case "${1:-}" in
+    -h|--help)
+        sed -n '2,/^set -u/p' "$0" | sed 's/^# \{0,1\}//;/^set -u/d'
+        exit 0 ;;
+    --) shift ;;
+esac
+
+# 没有 tty 就别放它进去。探针是菜单式的: 主菜单是 `while` 套 `read -p`, stdin 一 EOF
+# 就落到 `*) 无效选择; sleep 2` 分支**无限循环**, 每 2 秒一屏, 没人看见还在烧 CPU。
+# 踩法很常见: `cf ssh <app> -T -c 'vps'` 就是无 tty。要跑得开真 tty (`cf ssh <app>`)。
+if [ ! -t 0 ]; then
+    if [ -z "${VPS_FORCE_NOTTY:-}" ]; then
+        echo "vps: 没有 tty —— 这个探针是菜单式交互脚本, 无 tty 会死循环刷「无效选择」。" >&2
+        echo "     开真 tty 再敲: cf ssh <app>   (别用 -T -c)" >&2
+        echo "     确实要在管道里跑: VPS_FORCE_NOTTY=1 vps < /dev/null" >&2
+        exit 1
+    fi
+    echo "vps: 无 tty 但设了 VPS_FORCE_NOTTY —— 卡住了用 pkill -f 'vps_info[.]sh' 收尸" >&2
+fi
+
+case "${1:-}" in
+    -l|--local|--cached)
+        shift
+        [ -s "$CACHE" ] || { echo "vps: 没有缓存 $CACHE, 先联网跑一次" >&2; exit 1; }
+        echo "vps: 用缓存 $CACHE ($(date -r "$CACHE" '+%F %T'))" >&2
+        exec bash "$CACHE" "$@" ;;
+esac
+
+tmp=$(mktemp "${TMPDIR:-/tmp}/vps_info.XXXXXX") || exit 1
+
+if curl -fsSL --connect-timeout 10 --max-time 120 "$URL" -o "$tmp" && [ -s "$tmp" ]; then
+    mv -f "$tmp" "$CACHE"
+elif [ -s "$CACHE" ]; then
+    rm -f "$tmp"
+    echo "vps: 下载失败, 退回缓存 $CACHE ($(date -r "$CACHE" '+%F %T'))" >&2
+else
+    rm -f "$tmp"
+    echo "vps: 下载失败且无缓存。先确认容器能出网:" >&2
+    echo "     curl -I $URL" >&2
+    exit 1
+fi
+
+exec bash "$CACHE" "$@"

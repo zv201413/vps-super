@@ -75,6 +75,14 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY etaddr.py sweep.py punchd.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/etaddr.py /usr/local/bin/sweep.py /usr/local/bin/punchd.sh
 
+# 拷贝 vps 探针入口 (直接敲 `vps` 即可, 拉的是 zv201413/info 的 vps_info.sh)
+#   与 docker-ocr-mesh 里的同一份, 改动请两边同步。
+#   软链到 /usr/bin 是为了 `cf ssh <app> -T -c '...'` —— 它的 PATH 只有 /bin:/usr/bin。
+#   做成软链而非第二份拷贝是故意的: 探针自己那段「快捷键配置」以 root 跑完会覆盖
+#   /usr/local/bin/vps, 软链跟着变, 两条 PATH 永远同一份。
+COPY vps /usr/local/bin/vps
+RUN chmod +x /usr/local/bin/vps && ln -sf /usr/local/bin/vps /usr/bin/vps
+
 # 移除系统默认配置，确保只走持久化卷里的配置
 RUN rm -f /etc/supervisor/supervisord.conf
 
