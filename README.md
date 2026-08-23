@@ -139,12 +139,13 @@ KOMARI=wget -qO- https://raw.githubusercontent.com/zv201413/komari-agent_new/ref
 
 | 变量 | 必填 | 说明 |
 | :--- | :---: | :--- |
-| `ET` | ✅ | 总开关，格式 `<监听端口>:<网络名>:<密钥>:<虚拟IP>`。**网络名与密钥必填**且同一组网所有节点必须一致；虚拟 IP 可省略（省略则 DHCP 自动分配）。监听端口非数字时回落 `11010` |
+| `ET` | ✅ | 总开关，格式 `<监听端口>:<网络名>:<密钥>:<虚拟IP>`。**网络名与密钥必填**且同一组网所有节点必须一致；虚拟 IP 可省略（省略则 DHCP 自动分配），**也可只写最后一段**（`:2` = `10.126.126.2`）。监听端口非数字时回落 `11010` |
 | `ET_PEERS` | ⚠️ | 对端节点 URI，**逗号分隔**。不填也能启动，但只能发现同局域网节点 —— **异地组网必填** |
 | `ET_MODE` | ❌ | `auto`（默认，自动探测 TUN）/ `tun`（强制）/ `notun`（强制无 TUN） |
+| `ET_SUBNET` | ❌ | 默认 `10.126.126`。虚拟 IP 只写最后一段时用它补前三段 |
 | `ET_ARGS` | ❌ | 追加原生 `easytier-core` 参数（逃生阀），如 `--latency-first --compression zstd` |
-| `PUNCH` | ❌ | UDP 打洞守护。`auto`（推荐，对端 IP 自动学）或 `<对端公网IP>`；可带 `:<端口>:<间隔秒>`。**只在 Port-Restricted/Cone 那一侧配** |
-| `ET_ANNOUNCE_IP` | ❌ | 默认 `1`。自测本节点 UDP 出口 IP 并写进 hostname 后缀广播给对端 —— 对端 `PUNCH=auto` 靠它工作。设 `0` 关闭 |
+| `PUNCH` | ❌ | UDP 打洞守护，**两侧角色不同**：Port-Restricted/Cone 侧填 `auto`（做扫射），Symmetric 侧填 `dial`（只把 `udp://` 对端跟到它广播的当前 IP）。也可写死 `<对端公网IP>`；均可带 `:<端口>:<间隔秒>` |
+| `ET_ANNOUNCE_IP` | ❌ | 默认 `1`。自测本节点 UDP 出口 IP 并写进 hostname 前缀广播给对端 —— 对端的 `auto` / `dial` 都靠它工作。设 `0` 关闭 |
 | `ET_MAPPED` | ❌ | 默认 `auto`（用自测到的出口地址生成 `--mapped-listeners`，仅在设了 `PUNCH` 时才加）。也可写死 `<IP:端口>`，或设 `0` 关闭 |
 
 > ⚠️ **网络名与密钥不能含冒号 `:`**（`ET` 用冒号分四段）。
@@ -337,7 +338,7 @@ ET_PEERS=udp://<A的公网IP>:11010,tcp://<A的公网IP>:11010,ws://<A的公网I
 
 两端 `mynet` / `mysecret` 必须一致。B 起来后，A 上可以直接 `ssh zv@10.126.126.2` 或访问 `http://10.126.126.2:7681`。
 
-虚拟 IP 想让 EasyTier 自动分配就省掉第四段：`ET=11010:mynet:mysecret`（走 DHCP，从 `10.0.0.1` 起）。
+虚拟 IP 想让 EasyTier 自动分配就省掉第四段：`ET=11010:mynet:mysecret`（走 DHCP，从 `10.0.0.1` 起）。**也可只写最后一段**：`…:2` = `10.126.126.2`（换网段设 `ET_SUBNET`）。
 
 ### ④ 用 Cloudflare 隧道当入口（两端都没公网端口时）
 
@@ -399,42 +400,25 @@ KOMARI=bash -c 'curl -fsSL https://github.com/EasyTier/EasyTier/releases/downloa
 
 ### ⑥ UDP 打洞（PUNCH）
 
-`peer` 表里 `tunnel` 只有 `tcp`、迟迟不出现 `udp`，而两端 `nat_type` 一个是 `Symmetric` 一个是 `PortRestricted` —— 这一对 EasyTier 自己打不通，要开 `PUNCH`。
+**什么时候要开**：`easytier-cli peer` 里 `tunnel` 只有 `tcp` 不出 `udp`，且两端 `nat_type` 一个 `Symmetric` 一个 `PortRestricted`。
 
-**只在 `PortRestricted`（或 Cone）那一侧加一个变量即可**：
+**怎么配**——两侧各加一个变量，角色不同：
+
+| 本侧 `nat_type` | 加什么 | 它干的活 |
+| :--- | :--- | :--- |
+| `PortRestricted` / Cone | `PUNCH=auto` | 全端口扫射预授权（会短暂重启 EasyTier） |
+| `Symmetric` | `PUNCH=dial` | 把 `udp://` 对端跟到对方当前出口 IP（不重启） |
+
+写全是 `PUNCH=auto:<端口>:<间隔秒>`，间隔默认 60；`auto` 的端口默认取 `ET` 监听端口，`dial` 的端口填**对端**的 UDP 端口。两侧都别关 `ET_ANNOUNCE_IP`（默认开）。
+
+**怎么看**：
 
 ```bash
-PUNCH=auto
-```
-
-想改端口和检查间隔就写全：`PUNCH=auto:11030:30`（端口默认取 `ET` 里的监听端口，间隔默认 60 秒）。
-
-另一侧**什么都不用配**，只要别把 `ET_ANNOUNCE_IP` 关掉（默认就是开）。
-
-看效果：
-
-```bash
-tail -f /var/log/punchd.out.log     # 打洞守护日志
 easytier-cli peer                   # tunnel 列出现 udp 就是通了
+tail -f /var/log/punchd.out.log     # 守护日志
 ```
 
-正常日志长这样：
-
-```
-[punchd 03:13:07] 缺 UDP (tunnel=tcp), 第 1 次授权接力 → 52.139.216.172
-[punchd 03:13:14]   第1 轮 64512 端口 / 1.35s
-[punchd 03:13:15]   第2 轮 64512 端口 / 0.89s
-[punchd 03:13:15] 接力完成, EasyTier 已重启
-[punchd 03:13:35] UDP 已恢复 (tunnel=tcp,udp)
-```
-
-三件要知道的事：
-
-- **每次接力 EasyTier 会断 3～5 秒**（要腾出端口去扫射）。只在缺 UDP 时才动，通了就不再动。
-- **容器出口 IP 每次重启都会变**（实测 CF 换 cell 就换 IP），所以别用 `PUNCH=<写死的IP>` —— 那是「重启一次就永久打不通」。`auto` 就是为这个来的。
-- **对端跑旧镜像时 `auto` 用不了**，日志会提示「对端未公布出口 IP」。
-
-原理、坑点、实测吞吐数字见 [UDP 打洞原理与坑点](docs/nat-punching.md)。
+打不通、日志读不懂、想知道为什么不能写死对端 IP → [UDP 打洞原理与坑点](docs/nat-punching.md)。
 
 ### ⑦ 查看状态
 

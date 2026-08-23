@@ -148,7 +148,7 @@ else
 fi
 
 # 生成指纹
-FINGERPRINT="USER:$USER_NAME|P1:$P1_PORT|P2:${P2_PORT:-none}|CF:${CF_TOKEN:-none}|KPAL:${KPAL:-none}|HYP2P:${HYP2P:-none}|RV:${HYP2P_RV:-public}|SBP2P:${SBP2P:-none}|ET:${ET:-none}|ETP:${ET_PEERS:-none}|ETM:${ET_MODE:-auto}|ETA:${ET_ARGS:-none}|PU:${PUNCH:-none}|ETAN:${ET_ANNOUNCE_IP:-1}|ETMP:${ET_MAPPED:-auto}"
+FINGERPRINT="USER:$USER_NAME|P1:$P1_PORT|P2:${P2_PORT:-none}|CF:${CF_TOKEN:-none}|KPAL:${KPAL:-none}|HYP2P:${HYP2P:-none}|RV:${HYP2P_RV:-public}|SBP2P:${SBP2P:-none}|ET:${ET:-none}|ETP:${ET_PEERS:-none}|ETM:${ET_MODE:-auto}|ETA:${ET_ARGS:-none}|PU:${PUNCH:-none}|ETAN:${ET_ANNOUNCE_IP:-1}|ETMP:${ET_MAPPED:-auto}|ETSN:${ET_SUBNET:-10.126.126}"
 
 # --- 5. 保活脚本生成 ---
 if [ -n "$KPAL" ]; then
@@ -476,16 +476,19 @@ fi
 #              UDP 用于打洞直连, TCP/WS/WSS 在 UDP 被封时兜底
 #   网络名   : 必填, 同一组网的所有节点必须一致
 #   密钥     : 必填, 同一组网的所有节点必须一致
-#   虚拟IP   : 可空, 留空则 --dhcp 自动分配 (从 10.0.0.1 起)
+#   虚拟IP   : 可空, 留空则 --dhcp 自动分配 (从 10.0.0.1 起)。
+#              **只写最后一段也行**: `2` = `10.126.126.2` (网段可用 ET_SUBNET 改)。
+#              同一组网前三段永远一样, 每台机抄全长纯属噪音, 还容易抄错
 #   注意: 前四段用冒号分隔, 故网络名与密钥不能含冒号
 # 对端节点: ET_PEERS="udp://主机:11010,tcp://主机:11010,ws://主机:11011"
 #           同一主机写多种协议即为兜底链: UDP 打不通自动落到 TCP, 再落到 WS
 # 其他: ET_MODE=auto|tun|notun (默认 auto, 自动探测 TUN 可用性)
+#       ET_SUBNET=10.126.126 (默认), 虚拟IP 只写最后一段时用它补前三段
 #       ET_ARGS=追加的原生 easytier-core 参数 (逃生阀, 勿重复上面已设的参数)
 #
 # --- 打洞相关 (Symmetric ↔ PortRestricted 这类 EasyTier 自己打不通的组合) ---
 # ET_ANNOUNCE_IP=1|0  默认 1。启动时自测本节点 UDP 出口地址, 并把出口 IP 写进
-#                     EasyTier hostname 后缀 `-ip-a-b-c-d` 广播给对端。
+#                     EasyTier hostname 前缀 `ip-a-b-c-d-` 广播给对端。
 #                     这是对端 punchd 唯一能拿到「该往哪个 IP 扫射」的途径 ——
 #                     EasyTier 的 peer/route 都不含对端公网端点字段。
 #                     容器出口 IP 每次重启都可能变 (实测 CF 换 cell 就换 IP),
@@ -495,10 +498,21 @@ fi
 #                     告诉对端「来这个 UDP 端点找我」。仅在设了 PUNCH 时才加
 #                     (需要被扫射一侧才需要公布端点)。
 #                     自测判出 Symmetric 映射时端口不可信, 退回本地端口。
-# PUNCH=auto[:端口[:间隔]] | <对端IP>[:端口[:间隔]]
-#                     启用 UDP 打洞守护 (缺 UDP 时做「停 ET → 全端口扫射 → 起 ET」
-#                     的授权接力)。auto = 对端 IP 从 peer hostname 自动学, 推荐;
-#                     端口默认取上面的 ET 监听端口, 间隔默认 60s。
+# PUNCH=auto[:端口[:间隔]] | dial[:对端端口[:间隔]] | <对端IP>[:端口[:间隔]]
+#                     启用 UDP 打洞守护。两侧角色不同, 各配一句:
+#                       auto —— PortRestricted/Cone 侧。缺 UDP 时做「停 ET →
+#                               全端口扫射对端 → 起 ET」的授权接力, 对端 IP 从
+#                               peer hostname 自动学; 端口默认取上面的 ET 监听端口
+#                       dial —— Symmetric 侧。不扫射、不停 ET, 只盯着对端广播的
+#                               出口 IP, 用 easytier-cli connector 把 udp:// 对端
+#                               改到当前值 (顺手摘掉指向旧 IP 的死连接)。
+#                               它的端口是**对端**的 UDP 端口, 留空则同本节点
+#                       <对端IP> —— 写死, 只在对端不会换 IP 时用
+#                     为什么 Symmetric 侧也得有守护 (2026-08-23 实测): 对端换 IP 后
+#                     ET_PEERS 里那条 udp:// 就成了死地址, easytier 每 3 秒朝它重试
+#                     到天荒地老, 而 --mapped-listeners 并不会让它去拨新地址 ——
+#                     EasyTier 只对「仅能经中继到达」的 peer 触发打洞, TCP 一通就
+#                     已算 p2p, 于是它认为无事可做。间隔默认 60s。
 #                     原理与坑点见 README「异地组网 (ET) 详解 → UDP 打洞」。
 if [ -n "$ET" ]; then
     set +e   # 组网初始化为 best-effort: 失败不应拖垮 sshd/ttyd 等其他服务
@@ -545,7 +559,18 @@ if [ -n "$ET" ]; then
         fi
 
         # 2) 虚拟 IP: 显式指定优先, 否则 dhcp 自动分配
+        #    只写最后一段也认 (ET=11010:net:sec:2 → 10.126.126.2): 同一组网里前三段
+        #    永远一样, 每台机抄一遍长地址纯属噪音, 还容易抄错。网段可用 ET_SUBNET 改
         if [ -n "$ET_VIP" ]; then
+            if echo "$ET_VIP" | grep -qE '^[0-9]{1,3}$' \
+               && [ "$ET_VIP" -ge 1 ] && [ "$ET_VIP" -le 254 ]; then
+                ET_SUBNET_N=$(printf '%s' "${ET_SUBNET:-10.126.126}" | sed 's/\.*$//')
+                ET_VIP="$ET_SUBNET_N.$ET_VIP"
+            elif ! echo "$ET_VIP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?$'; then
+                # 既不是合法末段 (1-254) 也不是完整 IP。照原样传给 easytier 让它自己报错,
+                # 但先说一句 —— 否则 easytier 起不来, 整个组网静默失踪, 很难查
+                echo "⚠️ ET 的虚拟IP 段 '$ET_VIP' 既不像完整 IP 也不像末段(1-254), easytier 可能拒绝启动"
+            fi
             ET_IP_ARG="-i $ET_VIP"
         else
             ET_IP_ARG="--dhcp"
@@ -580,13 +605,28 @@ if [ -n "$ET" ]; then
             ET_PUB_KIND=$(printf '%s' "$_addr" | awk '{print $3}')
         fi
         if [ -n "$ET_PUB_IP" ]; then
-            # hostname = <基名>-ip-a-b-c-d。用连字符而不是点: EasyTier 的 magic dns
-            # 会把 hostname 当域名标签 (<hostname>.et.net), 含点会被切碎
+            # hostname = ip-a-b-c-d-<基名>。两条都是实测逼出来的:
+            #   · 用连字符而不是点: EasyTier 的 magic dns 会把 hostname 当域名标签
+            #     (<hostname>.et.net), 含点会被切碎
+            #   · IP 放**最前面**: EasyTier 把 hostname 硬截断到 32 字符 (实测)。
+            #     IP 放后面时基名一长就把 IP 尾巴截掉 —— 实测 SAP 广播出的是
+            #     localhost-localdomai-ip-20-195-9 (末段 169 没了), 对端解析不出来,
+            #     打洞守护一直报「对端未公布出口 IP」。IP 在前, 截断只会吃掉基名,
+            #     而基名纯粹是给人看的, 少几个字符无所谓。
+            _ipd=$(printf '%s' "$ET_PUB_IP" | tr '.' '-')
+            _room=$((32 - ${#_ipd} - 4))     # 4 = "ip-" 三字符 + 基名前的连字符
             _hb=$(printf '%s' "${ET_HOSTNAME:-$(cat /etc/hostname 2>/dev/null || echo node)}" \
-                  | cut -c1-20 | sed 's/[^A-Za-z0-9-]/-/g')
-            ET_HOST_ARG="--hostname ${_hb}-ip-$(printf '%s' "$ET_PUB_IP" | tr '.' '-')"
+                  | sed 's/[^A-Za-z0-9-]/-/g' | cut -c1-"$_room" | sed 's/-*$//')
+            if [ -n "$_hb" ]; then
+                ET_HOST_ARG="--hostname ip-$_ipd-$_hb"
+            else
+                ET_HOST_ARG="--hostname ip-$_ipd"
+            fi
         fi
-        if [ -n "$PUNCH" ] && [ "${ET_MAPPED:-auto}" != "0" ]; then
+        # PUNCH 第一段决定本节点在打洞里的角色: dial 侧 (Symmetric) 的映射端口随目标
+        # 变化, 公布任何端点都只会误导对端, 所以它不加 --mapped-listeners
+        ET_PUNCH_ROLE=$(printf '%s' "$PUNCH" | cut -d: -f1)
+        if [ -n "$PUNCH" ] && [ "$ET_PUNCH_ROLE" != "dial" ] && [ "${ET_MAPPED:-auto}" != "0" ]; then
             case "${ET_MAPPED:-auto}" in
                 auto)
                     if [ -n "$ET_PUB_IP" ]; then
@@ -657,9 +697,14 @@ if [ -n "$ET" ]; then
         fi
         [ -n "$ET_MAP_ARG" ] && echo " 公布端点   : ${ET_MAP_ARG#--mapped-listeners }"
         if [ -n "$PUNCH" ]; then
-            echo " UDP 打洞   : 已启用 (PUNCH=$PUNCH)"
+            case "$ET_PUNCH_ROLE" in
+                dial) echo " UDP 打洞   : 已启用 · dial 侧 (PUNCH=$PUNCH)"
+                      echo "              本侧不扫射, 只把 udp:// 对端跟到它广播的当前 IP"
+                      echo "              对端要设 PUNCH=auto 去做扫射" ;;
+                *)    echo " UDP 打洞   : 已启用 · 扫射侧 (PUNCH=$PUNCH)"
+                      echo "              对端要跑本镜像并设 PUNCH=dial, 或至少开着 ET_ANNOUNCE_IP" ;;
+            esac
             echo "              日志 tail -f /var/log/punchd.out.log"
-            echo "              对端也要跑本镜像并设 PUNCH, 或至少开着 ET_ANNOUNCE_IP"
         fi
         echo " 查看状态   : easytier-cli peer / easytier-cli route"
         echo " 运行日志   : tail -f /var/log/easytier.err.log"
@@ -675,6 +720,12 @@ if [ -n "$ET" ]; then
         echo "========================================"
     fi
     set -e
+fi
+
+# PUNCH 的落地代码嵌在上面 `if [ -n "$ET" ]` 里面 (它要 ET_PORT 才知道扫哪个端口),
+# 所以只设 PUNCH 不设 ET 会**静默无事发生** —— 这里补一句提示, 免得干等日志
+if [ -z "$ET" ] && [ -n "$PUNCH" ]; then
+    echo "⚠️ PUNCH 已设置但 ET 未设置 → 打洞守护不会启动 (它是给 EasyTier 的隧道用的)"
 fi
 
 echo "alias sctl='supervisorctl -c $BOOT_CONF'" >> /etc/bash.bashrc
