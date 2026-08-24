@@ -3,46 +3,33 @@
 > 基于 **Ubuntu 22.04** 的「环境变量驱动」多服务容器镜像。
 > 设好变量 → 服务自动拉起、配置自动生成、数据自动持久化，由 **Supervisor** 统一保活。
 
-专为 **免费容器平台**（Koyeb / Railway / Render / Zeabur / HuggingFace Spaces 等，无 Docker 访问权、常无公网入站端口）以及**自建 Docker / VPS** 设计。一个镜像同时提供：SSH、Web 终端、Cloudflare 隧道、循环保活、流量统计、一次性安装注入、**P2P 打洞的 Hysteria2 出站代理**，以及 **EasyTier 异地组网**。
+专为 **免费容器平台**（Koyeb / Railway / Render / Zeabur / HuggingFace Spaces / SAP BTP 等，无 Docker 访问权、常无公网入站端口）以及**自建 Docker / VPS** 设计。一个镜像集成：SSH、Web 终端、Cloudflare 隧道、循环保活、流量统计、一次性命令注入、**P2P 打洞的 Hysteria2 出站代理** 以及 **EasyTier 异地组网**。
 
-```
-ghcr.io/zv201413/zvps:latest
-```
-
-> CI 每次推送自动构建并发布到 GHCR（见 [操作篇 §七](docs/operations.md)）。
+镜像地址：`ghcr.io/zv201413/zvps:latest`（GitHub Actions 自动构建）
 
 ---
 
-## 文档分三份，别在这里找步骤
+## 核心服务矩阵
 
-| 文件 | 答什么 | 里面有 |
-| :--- | :--- | :--- |
-| **本页** | 是什么、该读哪一份 | 服务一览、最小启动、分诊表、文件清单 |
-| **[操作篇](docs/operations.md)** | **怎么做** | 部署命令、环境变量全表、持久化怎么挂、HYP2P / 组网怎么开、运维命令、构建发布 |
-| **[原理与坑点](docs/pitfalls.md)** | **为什么这样、坏了怎么认** | 设计取舍、判据、实测数字、不要这么干 |
-| **[nat-punching.md](docs/nat-punching.md)** | UDP 打洞的机制 | Symmetric ↔ PortRestricted 怎么破 |
+| 服务 | 作用 | 触发变量 | 默认状态 | 端口 / 特性 |
+| :--- | :--- | :--- | :---: | :--- |
+| **sshd** | SSH 远程登录 | 始终开启 | ✅ ON | `22`（内部） |
+| **ttyd** | 浏览器 Web 终端 | 始终开启 | ✅ ON | 默认 `7681`（镜像唯一 EXPOSE 端口） |
+| **ttyd2** | 第二个 Web 终端 | `TTYD_P2` | ⬜ OFF | 自定义端口（常配合 CF 隧道） |
+| **cloudflared** | Cloudflare 隧道 | `CF_TOKEN` | ⬜ OFF | 出站隧道，免公网 IP 暴露服务 |
+| **kpal** | 循环 HTTP 保活 | `KPAL` | ⬜ OFF | 随机间隔请求，防容器休眠 |
+| **komari** | 启动时一次性脚本/命令注入 | `KOMARI` | ⬜ OFF | 自动执行第三方 agent 安装脚本 |
+| **hy2 (HYP2P)** | P2P 打洞 Hysteria2 出站代理 | `HYP2P` | ⬜ OFF | 无需公网入站端口，UDP 打洞直连 |
+| **easytier (ET)** | 异地组网（Mesh VPN） | `ET` | ⬜ OFF | UDP 打洞 P2P，TCP/WS/WSS 自动兜底 |
+| **punchd** | UDP 打洞守护 | `PUNCH` | ⬜ OFF | 扫射接力与动态对端跟踪（Symmetric 专用） |
 
----
-
-## 服务一览
-
-| 服务 | 作用 | 由谁开启 | 默认 | 端口 |
-| :--- | :--- | :--- | :---: | :---: |
-| **sshd** | SSH 登录 | 始终开启 | ✅ ON | `22` |
-| **ttyd** | 浏览器 Web 终端 | 始终开启（可配置） | ✅ ON | `7681` |
-| **ttyd2** | 第二个 Web 终端 | `TTYD_P2` | ⬜ OFF | 自定义 |
-| **cloudflared** | Cloudflare 隧道（免公网 IP 暴露服务） | `CF_TOKEN` | ⬜ OFF | 出站 |
-| **kpal** | 循环 HTTP 保活（防平台休眠） | `KPAL` | ⬜ OFF | — |
-| **komari** | 启动时执行一次任意命令 / 安装脚本 | `KOMARI` | ⬜ OFF | — |
-| **hy2 (HYP2P)** | P2P 打洞的 Hysteria2 出站代理落地 | `HYP2P` | ⬜ OFF | 无入站（打洞） |
-| **easytier (ET)** | 异地组网：UDP 打洞 P2P，TCP/WS/WSS 兜底 | `ET` | ⬜ OFF | `11010-11012`（可改） |
-| **punchd** | UDP 打洞守护：缺 UDP 就做授权接力（Symmetric ↔ PortRestricted 专用） | `PUNCH` | ⬜ OFF | — |
-
-镜像只 `EXPOSE 7681`，是[故意的](docs/pitfalls.md)（§一）。
+> 镜像仅 `EXPOSE 7681`，以避免 PaaS 平台将路由误绑定到 22 等端口（详见 [原理与避坑清单](docs/pitfalls.md)）。
 
 ---
 
-## 60 秒上手
+## 快速上手
+
+### 1. 最小启动（SSH + Web 终端）
 
 ```bash
 docker run -d --name zvps \
@@ -50,60 +37,94 @@ docker run -d --name zvps \
   -p 2222:22 -p 7681:7681 \
   ghcr.io/zv201413/zvps:latest
 ```
+- **SSH**：`ssh zv@<host> -p 2222`（默认用户名 `zv`）
+- **Web 终端**：`http://<host>:7681`
 
-- SSH：`ssh zv@<host> -p 2222`（默认用户 `zv`）
-- Web 终端：`http://<host>:7681`
+### 2. 典型组合启动（持久化 + 隧道 + 保活 + 流量统计）
 
-全功能启动、平台面板部署、每个变量的含义 → **[操作篇 §一、§二](docs/operations.md)**。
+```bash
+docker run -d --name zvps \
+  -e SSH_USER="zv" \
+  -e SSH_PWD="改成你的密码" \
+  -e TTYD_P1="7681:admin:终端密码" \
+  -e CF_TOKEN="你的_cloudflare_tunnel_token" \
+  -e KPAL="300:60:https://你的监控地址" \
+  -e GB=true \
+  -v /opt/zvps_data:/home/zv \
+  -p 2222:22 -p 7681:7681 \
+  --restart unless-stopped \
+  ghcr.io/zv201413/zvps:latest
+```
+
+> PaaS 面板部署（Koyeb / Railway 等）只需在环境变量面板填入对应 KEY/VALUE 即可。
 
 ---
 
-## 我要做的事 → 读哪一节
+## 常用环境变量速查
 
-| 我想… | 去哪 |
-| :--- | :--- |
-| 挂持久卷，别一重启就没了 | [操作篇 §三](docs/operations.md) |
-| 让容器变成我的出站代理（本地翻出去） | [操作篇 §四](docs/operations.md) |
-| Windows 上双击就连 | [操作篇 §4.4](docs/operations.md) |
-| 把几台机器拉进同一个虚拟局域网 | [操作篇 §5.1](docs/operations.md) |
-| 两端都开不了端口，还想组网 | [操作篇 §5.2](docs/operations.md)（先看[原理 §六](docs/pitfalls.md)） |
-| 让 UDP 打洞打通 | [操作篇 §5.4](docs/operations.md) → [nat-punching.md](docs/nat-punching.md) |
-| 看流量 / 看进程 / 重启某个服务 | [操作篇 §六](docs/operations.md) |
-| 给机器做体检（`vps`） | [操作篇 §6.1](docs/operations.md) |
-| 自己构建镜像 | [操作篇 §七](docs/operations.md) |
-
-## 坏了 → 去哪查
-
-| 症状（你会怎么说） | 大概是 | 去哪 |
+### 管理与基础
+| 变量 | 默认 | 格式 / 说明 |
 | :--- | :--- | :--- |
-| 「数据一重启就没了」 | 卷挂错路径（`SSH_USER` 决定家目录） | [操作篇 §三](docs/operations.md) |
-| 「组网起来了但容器自己 ping 不通别人」 | 无 TUN 模式是单向的 | [原理 §三](docs/pitfalls.md) |
-| 「`ET_PEERS` 明明填了，一个对端都没有」 | 用了空格分隔，静默解析成 0 条 | [原理 §二](docs/pitfalls.md) |
-| 「牵线服务器连不上，握手就失败」 | `realm://` / `realm+http://` 选错 | [原理 §五](docs/pitfalls.md) |
-| 「组网通了但慢得离谱（半秒延迟）」 | 走的是 CF 中转不是 P2P | [原理 §六](docs/pitfalls.md) |
-| 「easytier 起不来，`Address in use`」 | `cloudflared access --url` 撞了 11010 | [原理 §六](docs/pitfalls.md) |
-| 「加了 Cloudflare Access 之后就连不上了」 | Access 要 OAuth，EasyTier 不是浏览器 | [原理 §六](docs/pitfalls.md) |
-| 「莫名多出一个 socks5 端口」 | 残留的 `ET_*` 变量被 easytier 原生读走 | [原理 §七](docs/pitfalls.md) |
-| 「本地 client 昨天还能连，今天不行了」 | 无持久卷平台重启换了 realm 名和指纹 | [原理 §四](docs/pitfalls.md) |
-| 「`tunnel` 一直只有 tcp 出不来 udp」 | 两端 NAT 类型组合需要 `PUNCH` | [nat-punching.md](docs/nat-punching.md) |
-| 「`vps` 敲了没反应 / 一直刷无效选择」 | 下载静默失败，或没有真 tty | [原理 §九](docs/pitfalls.md) |
+| `SSH_USER` | `zv` | SSH 用户名，**决定持久化家目录**（`/home/<用户>`；设 `root` 为 `/root`） |
+| `SSH_PWD` | `pwd123` | SSH 登录密码（公网暴露务必覆盖） |
+| `TTYD_P1` | `7681` | 主终端，格式 `[端口]:[用户]:[密码]`（推荐 `7681:admin:密码`） |
+| `TTYD_P2` | （关） | 次终端，格式同上（常配合 CF 隧道发布到 80 端口） |
+
+### 异地组网 `ET` 与打洞 `PUNCH`
+| 变量 | 默认 | 格式 / 说明 |
+| :--- | :--- | :--- |
+| `ET` | （关） | `<监听端口>:<网络名>:<密钥>:[虚拟IP]`（网络名/密钥不可含冒号） |
+| `ET_PEERS` | （关） | 对端 URI，逗号或空格分隔（如 `tcp://...,udp://...`） |
+| `ET_MODE` | `auto` | `auto`（无权限自动降级无 TUN）/ `tun` / `notun` |
+| `PUNCH` | （关） | 打洞守护：`auto`（扫射侧，缺 UDP 接力）/ `dial`（拨号侧，跟踪对端出口 IP） |
+
+### P2P 出站代理 `HYP2P`
+| 变量 | 默认 | 格式 / 说明 |
+| :--- | :--- | :--- |
+| `HYP2P` | （关） | `<认证密码>:<混淆密码>:[进程伪装名]`（密码不可含冒号） |
+| `HYP2P_RV` | 官方公共 | 牵线服务器 URI（留空自动使用公共 `realm.hy2.io`） |
+
+### 扩展功能
+| 变量 | 默认 | 格式 / 说明 |
+| :--- | :--- | :--- |
+| `CF_TOKEN` | （关） | Cloudflare Tunnel Token，免公网端口暴露服务 |
+| `KPAL` | （关） | `[范围]:[偏移]:URL`，每轮等待 `RANDOM % 范围 + 偏移` 秒后请求一次 |
+| `KOMARI` | （关） | 启动时执行一次的自定义命令 / 安装脚本（如第三方探针安装命令） |
+| `GB` | （关） | 设为任意非空值开启流量统计（终端输入 `gb` 查看） |
 
 ---
 
-## 文件
+## 常用排障命令
 
-| 文件 | 作用 |
+```bash
+sctl status                                      # 查看所有 supervisor 服务状态
+easytier-cli -o json -p 127.0.0.1:15888 peer     # 查看 EasyTier 节点状态与打洞协议
+tail -f /var/log/punchd.out.log                  # 查看 UDP 打洞守护日志
+vps                                              # 运行内置 VPS 性能与网络体检工具箱
+```
+
+---
+
+## 深入文档
+
+- **[操作指南 (docs/operations.md)](docs/operations.md)** —— 环境变量完整说明、持久卷挂载规范、HYP2P 客户端配置与一键批处理、EasyTier 对接、构建与发布。
+- **[原理与避坑清单 (docs/pitfalls.md)](docs/pitfalls.md)** —— 为什么只 EXPOSE 7681、TUN 自动降级判据、CF 隧道代理机制与延迟、`vps` 探针无 tty 死循环等实踩记录。
+- **[NAT 打洞机制 (docs/nat-punching.md)](docs/nat-punching.md)** —— Symmetric ↔ PortRestricted 死锁破法、全端口扫射接力、IP 动态广播机制。
+
+---
+
+## 仓库文件
+
+| 文件 / 目录 | 作用 |
 | :--- | :--- |
-| `Dockerfile` | 镜像构建：装 ttyd / cloudflared / hysteria / sing-box / easytier / opencode，投放脚本 |
-| `entrypoint.sh` | 按环境变量生成 supervisor 配置并启动；配置指纹机制避免每次重启都重写 |
-| `supervisord.conf` | supervisor 基础配置模板（含 `{SSH_USER}` 占位符） |
-| `fragments/*.conf` | 各服务的 supervisor 片段，由 entrypoint 按需投放 |
-| `etaddr.py` | STUN 自测本节点 UDP 出口 IP 与映射端口（供 hostname 广播和 `--mapped-listeners`） |
-| `sweep.py` | 全端口 UDP 预授权扫射。与 docker-ocr-mesh 里的**同一份，改动两边同步** |
-| `punchd.sh` | 打洞守护，两个角色：`auto` 缺 UDP 就做授权接力，`dial` 把 `udp://` 对端跟到它广播的出口 IP。**同上，两边同步** |
-| `vps` | `vps` 命令：拉 [`zv201413/info`](https://github.com/zv201413/info) 的探针跑机器体检。**同上，两边同步** |
-| `manifest.yml` | SAP CF 部署清单（`cf push` 用） |
-| `.github/workflows/build-image.yml` | CI：推送即构建并发布到 GHCR |
+| `Dockerfile` | 镜像构建（集成 ttyd / cloudflared / hysteria / sing-box / easytier 等） |
+| `entrypoint.sh` | 环境变量解析、supervisor 配置生成与服务编排入口 |
+| `punchd.sh` | NAT 打洞守护进程（扫射接力与动态出口 IP 追踪） |
+| `sweep.py` | 快速 UDP 全端口预授权扫射工具 |
+| `etaddr.py` | STUN 出口 IP 与 NAT 类型自测工具 |
+| `vps` | VPS 硬件与网络体检工具箱 |
+| `fragments/` | Supervisor 模块化服务配置片段 |
+| `manifest.yml` | SAP BTP Cloud Foundry 部署清单 |
 
 ---
 
