@@ -3,7 +3,7 @@
 > 基于 **Ubuntu 22.04** 的「环境变量驱动」多服务容器镜像。
 > 设好变量 → 服务自动拉起、配置自动生成、数据自动持久化，由 **Supervisor** 统一保活。
 
-专为 **免费容器平台**（Koyeb / Railway / Render / Zeabur / HuggingFace Spaces / SAP BTP 等，无 Docker 访问权、常无公网入站端口）以及**自建 Docker / VPS** 设计。一个镜像集成：SSH、Web 终端、Cloudflare 隧道、循环保活、流量统计、一次性命令注入、**P2P 打洞的 Hysteria2 出站代理** 以及 **EasyTier 异地组网**。
+专为 **免费容器平台**（Koyeb / Railway / Render / Zeabur / HuggingFace Spaces / SAP BTP 等，无 Docker 访问权、常无公网入站端口）以及**自建 Docker / VPS** 设计。一个镜像集成：SSH、Web 终端、Cloudflare 隧道、循环保活、流量统计、一次性命令注入以及 **P2P 打洞的 Hysteria2 出站代理**。
 
 镜像地址：`ghcr.io/zv201413/zvps:latest`（GitHub Actions 自动构建）
 
@@ -20,8 +20,6 @@
 | **kpal** | 循环 HTTP 保活 | `KPAL` | ⬜ OFF | 随机间隔请求，防容器休眠 |
 | **komari** | 启动时一次性脚本/命令注入 | `KOMARI` | ⬜ OFF | 自动执行第三方 agent 安装脚本 |
 | **hy2 (HYP2P)** | P2P 打洞 Hysteria2 出站代理 | `HYP2P` | ⬜ OFF | 无需公网入站端口，UDP 打洞直连 |
-| **easytier (ET)** | 异地组网（Mesh VPN） | `ET` | ⬜ OFF | UDP 打洞 P2P，TCP/WS/WSS 自动兜底 |
-| **punchd** | UDP 打洞守护 | `PUNCH` | ⬜ OFF | 扫射接力与动态对端跟踪（Symmetric 专用） |
 
 > 镜像仅 `EXPOSE 7681`，以避免 PaaS 平台将路由误绑定到 22 等端口（详见 [原理与避坑清单](docs/pitfalls.md)）。
 
@@ -70,14 +68,6 @@ docker run -d --name zvps \
 | `TTYD_P1` | `7681` | 主终端，格式 `[端口]:[用户]:[密码]`（推荐 `7681:admin:密码`） |
 | `TTYD_P2` | （关） | 次终端，格式同上（常配合 CF 隧道发布到 80 端口） |
 
-### 异地组网 `ET` 与打洞 `PUNCH`
-| 变量 | 默认 | 格式 / 说明 |
-| :--- | :--- | :--- |
-| `ET` | （关） | `<监听端口>:<网络名>:<密钥>:[虚拟IP]`（网络名/密钥不可含冒号） |
-| `ET_PEERS` | （关） | 对端 URI，逗号或空格分隔（如 `tcp://...,udp://...`） |
-| `ET_MODE` | `auto` | `auto`（无权限自动降级无 TUN）/ `tun` / `notun` |
-| `PUNCH` | （关） | 打洞守护：`auto`（扫射侧，缺 UDP 接力）/ `dial`（拨号侧，跟踪对端出口 IP） |
-
 ### P2P 出站代理 `HYP2P`
 | 变量 | 默认 | 格式 / 说明 |
 | :--- | :--- | :--- |
@@ -98,8 +88,6 @@ docker run -d --name zvps \
 
 ```bash
 sctl status                                      # 查看所有 supervisor 服务状态
-easytier-cli -o json -p 127.0.0.1:15888 peer     # 查看 EasyTier 节点状态与打洞协议
-tail -f /var/log/punchd.out.log                  # 查看 UDP 打洞守护日志
 vps                                              # 运行内置 VPS 性能与网络体检工具箱
 ```
 
@@ -107,8 +95,8 @@ vps                                              # 运行内置 VPS 性能与网
 
 ## 深入文档
 
-- **[操作指南 (docs/operations.md)](docs/operations.md)** —— 环境变量完整说明、持久卷挂载规范、HYP2P 客户端配置与一键批处理、EasyTier 对接、构建与发布。
-- **[原理与避坑清单 (docs/pitfalls.md)](docs/pitfalls.md)** —— 为什么只 EXPOSE 7681、TUN 自动降级判据、CF 隧道代理机制与延迟、`vps` 探针无 tty 死循环等实踩记录。
+- **[操作指南 (docs/operations.md)](docs/operations.md)** —— 环境变量完整说明、持久卷挂载规范、HYP2P 客户端配置与一键批处理、构建与发布。
+- **[原理与避坑清单 (docs/pitfalls.md)](docs/pitfalls.md)** —— 为什么只 EXPOSE 7681、CF 隧道代理机制与延迟、`vps` 探针无 tty 死循环等实踩记录。
 
 ---
 
@@ -116,11 +104,8 @@ vps                                              # 运行内置 VPS 性能与网
 
 | 文件 / 目录 | 作用 |
 | :--- | :--- |
-| `Dockerfile` | 镜像构建（集成 ttyd / cloudflared / hysteria / sing-box / easytier 等） |
+| `Dockerfile` | 镜像构建（集成 ttyd / cloudflared / hysteria / sing-box 等） |
 | `entrypoint.sh` | 环境变量解析、supervisor 配置生成与服务编排入口 |
-| `punchd.sh` | NAT 打洞守护进程（扫射接力与动态出口 IP 追踪） |
-| `sweep.py` | 快速 UDP 全端口预授权扫射工具 |
-| `etaddr.py` | STUN 出口 IP 与 NAT 类型自测工具 |
 | `vps` | VPS 硬件与网络体检工具箱 |
 | `fragments/` | Supervisor 模块化服务配置片段 |
 | `manifest.yml` | SAP BTP Cloud Foundry 部署清单 |

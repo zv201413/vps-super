@@ -106,24 +106,7 @@ KOMARI=wget -qO- https://raw.githubusercontent.com/zv201413/komari-agent_new/ref
 
 > ⚠️ **密码不能含冒号 `:`**（靠冒号分三段）。只用字母数字和 `-`，如 `koyeb-udp-p2p123`。
 
-### 2.8 异地组网 `ET`
-
-| 变量 | 必填 | 说明 |
-| :--- | :---: | :--- |
-| `ET` | ✅ | 总开关，格式 `<监听端口>:<网络名>:<密钥>:<虚拟IP>`。**网络名与密钥必填**且同组网所有节点一致；虚拟 IP 可省略（省则 DHCP），**也可只写最后一段**（`:2` = `10.126.126.2`）。监听端口非数字时回落 `11010` |
-| `ET_PEERS` | ⚠️ | 对端节点 URI，**逗号分隔**。不填也能启动，但只能发现同局域网节点 —— **异地组网必填** |
-| `ET_MODE` | ❌ | `auto`（默认，自动探测 TUN）/ `tun`（强制）/ `notun`（强制无 TUN） |
-| `ET_SUBNET` | ❌ | 默认 `10.126.126`。虚拟 IP 只写最后一段时用它补前三段 |
-| `ET_ARGS` | ❌ | 追加原生 `easytier-core` 参数（逃生阀），如 `--latency-first --compression zstd` |
-| `PUNCH` | ❌ | UDP 打洞守护，**两侧角色不同**：Port-Restricted/Cone 侧填 `auto`（做扫射），Symmetric 侧填 `dial`（只把 `udp://` 对端跟到它广播的当前 IP）。也可写死 `<对端公网IP>`；均可带 `:<端口>:<间隔秒>` |
-| `ET_ANNOUNCE_IP` | ❌ | 默认 `1`。自测本节点 UDP 出口 IP 并写进 hostname 前缀广播给对端 —— 对端的 `auto` / `dial` 都靠它工作。设 `0` 关闭 |
-| `ET_MAPPED` | ❌ | 默认 `auto`（用自测到的出口地址生成 `--mapped-listeners`，仅在设了 `PUNCH` 时才加）。也可写死 `<IP:端口>`，或设 `0` 关闭 |
-
-> ⚠️ **网络名与密钥不能含冒号 `:`**（靠冒号分四段）。
-
-监听端口按 `<端口>` / `+1` / `+2` 分三种协议：`ET=11010:...` → udp+tcp `11010`、ws `11011`、wss `11012`。
-
-### 2.9 维护 `FORCE_UPDATE`
+### 2.8 维护 `FORCE_UPDATE`
 
 | 变量 | 默认 | 说明 |
 | :--- | :--- | :--- |
@@ -233,128 +216,19 @@ pause
 
 ---
 
-## 五、开异地组网（ET）
-
-用 [EasyTier](https://github.com/EasyTier/EasyTier) 把各地的容器 / VPS / 本地机器拉进同一个虚拟局域网，彼此用虚拟 IP（如 `10.126.126.x`）直接访问。
-
-### 5.1 两节点组网（有一端能开入站端口 —— 首选）
-
-**节点 A —— 有公网 IP 的 VPS**（当中继/牵线）：
-
-```bash
-docker run -d --name zvps-a \
-  -e SSH_PWD="你的密码" \
-  -e ET="11010:mynet:mysecret:10.126.126.1" \
-  -p 11010:11010 -p 11010:11010/udp -p 11011:11011 -p 11012:11012 \
-  --cap-add NET_ADMIN --device /dev/net/tun \
-  --restart unless-stopped \
-  ghcr.io/zv201413/zvps:latest
-```
-
-**节点 B —— 免费 PaaS 容器**（无入站端口，连 A）：
-
-```bash
-ET=11010:mynet:mysecret:10.126.126.2
-ET_PEERS=udp://<A的公网IP>:11010,tcp://<A的公网IP>:11010,ws://<A的公网IP>:11011
-```
-
-两端 `mynet` / `mysecret` 必须一致。B 起来后 A 上可直接 `ssh zv@10.126.126.2` 或访问 `http://10.126.126.2:7681`。
-
-虚拟 IP 想自动分配就省掉第四段（走 DHCP，从 `10.0.0.1` 起）；只写最后一段也行（`…:2` = `10.126.126.2`，换网段设 `ET_SUBNET`）。
-
-**为什么 `ET_PEERS` 要把同一节点写三种协议** → [原理与坑点 §二](pitfalls.md)。
-
-### 5.2 两端都没有入站端口：CF 隧道当入口（兜底）
-
-**这条是中转不是 P2P，实测延迟约 550 ms，先读[原理与坑点 §六](pitfalls.md)再决定用不用。**
-
-**容器侧**（同时设 `CF_TOKEN` 与 `ET`，启动横幅会把下面的值打印出来）：
-
-```bash
-CF_TOKEN=你的隧道token
-ET=11010:mynet:mysecret:10.126.126.1
-```
-
-**CF 面板**（Zero Trust → Networks → Tunnels → 你的隧道 → Public Hostname → Add）：
-
-| 字段 | 填什么 |
-| :--- | :--- |
-| 子域 / 域 | 例如 `krttyd` / `zvtd.cc.cd`，路径留空 |
-| 类型 | **HTTP** |
-| Service URL | `localhost:11011` ← **ws 端口，是 `ET` 端口 +1，不是 11010** |
-
-**对端**（任何机器，不用装 cloudflared）：
-
-```bash
-ET=11010:mynet:mysecret:10.126.126.2
-ET_PEERS=wss://krttyd.zvtd.cc.cd:443
-```
-
-两种隧道类型的取舍：
-
-| 类型 | Service 填 | 对端要求 | 评价 |
-| :--- | :--- | :--- | :---: |
-| **HTTP** | `localhost:11011`（ws 口） | 直接 `wss://域名:443` | ✅ 对端零依赖 |
-| **TCP** | `tcp://localhost:11010` | 先跑 `cloudflared access tcp --hostname 域名 --url 127.0.0.1:21010`，再连 `tcp://127.0.0.1:21010` | ⚠️ 每台对端都要装 cloudflared 并常驻 |
-
-> ⚠️ 走 TCP 类型时 `--url` 的本地端口**不要用 11010**（会撞本机 easytier）—— 判据见[原理与坑点 §六](pitfalls.md)。
-> ⚠️ **不要给这条主机名加 Cloudflare Access 应用**，理由同上。
-
-### 5.3 旧镜像不想重建：运行时装
-
-已在跑的旧镜像（没有 `easytier` 二进制）不必重新部署，用 `KOMARI` 在启动时装一次（镜像里 `curl` 和 `unzip` 都现成）：
-
-```bash
-KOMARI=bash -c 'curl -fsSL https://github.com/EasyTier/EasyTier/releases/download/v2.6.4/easytier-linux-x86_64-v2.6.4.zip -o /tmp/et.zip && unzip -qo /tmp/et.zip -d /tmp/et && find /tmp/et -name "easytier-*" -exec install -m755 {} /usr/local/bin/ \; && nohup easytier-core --network-name mynet --network-secret mysecret -i 10.126.126.1 -l ws://0.0.0.0:11011 --no-tun --use-smoltcp >/var/log/et.log 2>&1 &'
-```
-
-跑起来后 CF 面板照 §5.2 配 `localhost:11011`。这是应急手段：没有 supervisor 保活，进程挂了不会拉起。
-
-### 5.4 UDP 打洞（PUNCH）
-
-**什么时候开**：`easytier-cli peer` 里 `tunnel` 只有 `tcp` 不出 `udp`，且两端 `nat_type` 一个 `Symmetric` 一个 `PortRestricted`。
-
-**怎么配** —— 两侧各加一个变量，角色不同：
-
-| 本侧 `nat_type` | 加什么 | 它干的活 |
-| :--- | :--- | :--- |
-| `PortRestricted` / Cone | `PUNCH=auto` | 全端口扫射预授权（会短暂重启 EasyTier） |
-| `Symmetric` | `PUNCH=dial` | 把 `udp://` 对端跟到对方当前出口 IP（不重启） |
-
-写全是 `PUNCH=auto:<端口>:<间隔秒>`，间隔默认 60；`auto` 的端口默认取 `ET` 监听端口，`dial` 的端口填**对端**的 UDP 端口。两侧都别关 `ET_ANNOUNCE_IP`（默认开）。
-
-```bash
-easytier-cli peer                   # tunnel 出现 udp 就是通了
-tail -f /var/log/punchd.out.log     # 守护日志
-```
-
-### 5.5 查看状态
-
-```bash
-easytier-cli peer     # 对端列表: 隧道协议(udp/tcp/ws/wss)、p2p 还是中继、延迟、丢包
-easytier-cli route    # 路由表: 各节点虚拟 IP、下一跳、路径长度
-tail -f /var/log/easytier.err.log
-sctl status easytier  # supervisor 里的进程状态
-```
-
-`cost` 列是 `p2p` 说明打洞成功（直连）；显示中继节点名则走了中继。`tunnel` 列是实际使用的协议。
-
----
-
-## 六、日常运维
+## 五、日常运维
 
 | 操作 | 命令 | 说明 |
 | :--- | :--- | :--- |
 | 查流量 | `gb` | 需先开 `GB=true`，显示 eth0 RX/TX（MB+GB） |
-| 机器体检 | `vps` | 见 §6.1 |
+| 机器体检 | `vps` | 见 §5.1 |
 | 看进程 | `sctl status` | `sctl` = 内置 supervisorctl |
 | 重启服务 | `sctl restart kpal` | 服务名见 `sctl status` |
 | 重载配置 | `sctl update` | 改了 `boot/` 或 `supervisor/*.conf` 后执行 |
-| 看组网 | `easytier-cli peer` | 需先开 `ET` |
 
 启动后会在 `TARGET_HOME` 生成 `init_env.sh` 与 `boot/` 下的服务配置；改动后 `sctl update` 生效，或设 `FORCE_UPDATE=true` 重启重建。
 
-### 6.1 机器体检 `vps`
+### 5.1 机器体检 `vps`
 
 镜像里已装好，不必先手跑一遍那条 `bash <(curl -sL …)`。
 
@@ -365,13 +239,13 @@ vps -h       # 说明
 ```
 
 **必须是真 tty**（它是菜单式脚本）：`cf ssh <app>` 进去再敲，别 `cf ssh <app> -T -c 'vps'`。
-无 tty 时 `vps` 会直接拒绝并给提示。三个坑的细节见[原理与坑点 §九](pitfalls.md)。
+无 tty 时 `vps` 会直接拒绝并给提示。三个坑的细节见[原理与坑点 §四](pitfalls.md)。
 
-`vps` 与 docker-ocr-mesh 里的**同一份，改动请两边同步**（同 `sweep.py` / `punchd.sh` 的约定）。
+`vps` 与 docker-ocr-mesh 里的**同一份，改动请两边同步**。
 
 ---
 
-## 七、构建与发布
+## 六、构建与发布
 
 - **基础镜像**：`ubuntu:22.04`
 - **进程管理**：Supervisor（基础配置 `supervisord.conf`，各服务配置由 `entrypoint.sh` 按环境变量动态生成并 `include`）
