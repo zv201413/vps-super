@@ -1,7 +1,6 @@
 # ZVPS-Super 操作篇
 
-**本篇只有步骤。** 为什么这么设计、坑怎么认、实测数字 → [原理与坑点](pitfalls.md)。
-UDP 打洞的机制 → [nat-punching.md](nat-punching.md)。总入口 → [README](../README.md)。
+**本篇只有步骤。** 为什么这么设计、坑怎么认、实测数字 → [原理与坑点](pitfalls.md)；总入口 → [README](../README.md)。
 
 镜像：`ghcr.io/zv201413/zvps:latest`
 
@@ -328,8 +327,6 @@ KOMARI=bash -c 'curl -fsSL https://github.com/EasyTier/EasyTier/releases/downloa
 easytier-cli peer                   # tunnel 出现 udp 就是通了
 tail -f /var/log/punchd.out.log     # 守护日志
 ```
-
-打不通、日志读不懂、想知道为什么不能写死对端 IP → [nat-punching.md](nat-punching.md)。
 
 ### 5.5 查看状态
 

@@ -1,6 +1,6 @@
 # ZVPS-Super 原理与坑点
 
-**本篇不给可粘贴的命令。** 要步骤 → [操作篇](operations.md)；UDP 打洞的机制单独一篇 → [nat-punching.md](nat-punching.md)；总入口 → [README](../README.md)。
+**本篇不给可粘贴的命令。** 要步骤 → [操作篇](operations.md)；总入口 → [README](../README.md)。
 
 按「现象 → 判据 → 处置」记，都是实际踩过或实测过的。
 
@@ -103,7 +103,7 @@ EasyTier 默认开 **UDP 打洞**，打通即 P2P 直连（最低延迟），打
 
 - **必须自备对端节点**：官方公共节点 `public.easytier.cn` **已无 DNS A 记录**（实测解析失败），镜像因此不内置任何默认公共节点。用自己的公网 VPS 当节点最可靠；两端都没有公网端口时走 §六 的 CF 隧道，或自行找可用的社区公共节点填进 `ET_PEERS`。
 - **网络名 / 密钥不能含冒号**：`ET` 靠冒号分四段，含冒号会被切错。只用字母数字和 `-`。同理 `HYP2P` 的两个密码靠冒号分三段。
-- **NAT 类型决定能否 P2P**：一端对称 NAT（随机端口）且另一端非公网 / 全锥型时，UDP 打洞**可能失败**，此时自动走中继（功能正常，延迟和带宽受中继节点限制）。这种组合可以用 `PUNCH` 强行打通，见 [nat-punching.md](nat-punching.md)。
+- **NAT 类型决定能否 P2P**：一端对称 NAT（随机端口）且另一端非公网 / 全锥型时，UDP 打洞**可能失败**，此时自动走中继（功能正常，延迟和带宽受中继节点限制）。这种组合可以用 `PUNCH` 强行打通。
 - **密钥即入网凭证**：任何拿到网络名 + 密钥的人都能进你的组网，当密码对待。
 
 ---
@@ -120,9 +120,3 @@ EasyTier 默认开 **UDP 打洞**，打通即 P2P 直连（最低延迟），打
 
 **3. 探针跑完会覆盖 `/usr/local/bin/vps`。** 它自带一段「快捷键配置」，以 root 跑完就 `rm -f /usr/local/bin/vps` 再写它自己那份简版 wrapper（没有上面两道防线）。**不去对抗它**：容器 restart 后镜像里那份自动回来。
 `/usr/bin/vps` 故意做成**软链**指向 `/usr/local/bin/vps`（`cf ssh -T -c` 的 PATH 只有 `/bin:/usr/bin`，不含 `/usr/local/bin`）。做软链而不是拷第二份，是为了避免被覆盖后「交互 shell 跑到一个版本、`cf ssh` 跑到另一个版本」。
-
----
-
-## 十、UDP 打洞
-
-Symmetric ↔ PortRestricted 的死锁怎么破、为什么必须外挂守护、为什么**不能把对端 IP 写死** —— 单独一篇：**[nat-punching.md](nat-punching.md)**。

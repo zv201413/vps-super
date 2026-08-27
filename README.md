@@ -109,7 +109,6 @@ vps                                              # 运行内置 VPS 性能与网
 
 - **[操作指南 (docs/operations.md)](docs/operations.md)** —— 环境变量完整说明、持久卷挂载规范、HYP2P 客户端配置与一键批处理、EasyTier 对接、构建与发布。
 - **[原理与避坑清单 (docs/pitfalls.md)](docs/pitfalls.md)** —— 为什么只 EXPOSE 7681、TUN 自动降级判据、CF 隧道代理机制与延迟、`vps` 探针无 tty 死循环等实踩记录。
-- **[NAT 打洞机制 (docs/nat-punching.md)](docs/nat-punching.md)** —— Symmetric ↔ PortRestricted 死锁破法、全端口扫射接力、IP 动态广播机制。
 
 ---
 
