@@ -133,59 +133,9 @@ cat /home/zv/p2p/cert_sha256           # 证书指纹 (pinSHA256)
 - **SOCKS5 代理**：`127.0.0.1:1080`
 - **HTTP 代理**：`127.0.0.1:8080`
 
-### 3. 自建牵线服务器操作
-
-在具有公网 IP 的服务器上运行 [hysteria-realm-server](https://github.com/apernet/hysteria-realm-server)：
-
-```bash
-git clone https://github.com/apernet/hysteria-realm-server.git && cd hysteria-realm-server
-docker build -t hy-realm .
-docker run -d --name hy-realm --restart unless-stopped -p 8443:8443 \
-  -e HYSTERIA_REALM_TOKEN="你的token" -e HYSTERIA_REALM_LISTEN=":8443" hy-realm
-# 防火墙放行 TCP 8443
-```
-
-然后在容器环境变量中填入：
-- 裸跑无 TLS：`HYP2P_RV="realm+http://你的token@IP:8443/名字"`
-- 配置了 TLS 证书：`HYP2P_RV="realm://你的token@域名:8443/名字"`
-
-> ⚠️ Scheme 选型判据与自签证书机制见 [原理与避坑清单 · realm scheme 选择](docs/pitfalls.md#三realm-还是-realmhttp)。NAT 打洞限制与 IPv6 优化见 [原理与避坑清单 · NAT 限制](docs/pitfalls.md#二hyp2p-的两个硬前提)。
-
-### 4. Windows 一键批处理脚本
-
-1. 将 [hysteria-windows-amd64.exe](https://github.com/apernet/hysteria/releases/latest/download/hysteria-windows-amd64.exe) 放到桌面 `hysteria\` 目录下。
-2. 创建 `桌面\hy2-隧道.bat`，替换三行变量为容器输出的值：
-
-```batch
-@echo off
-title Hysteria2 P2P Tunnel
-
-:: 改下面三行为你容器的值
-set REALM=xxx       REM cat /home/zv/p2p/realm_name
-set AUTH=xxx        REM HYP2P 认证密码
-set PIN=xxx         REM cat /home/zv/p2p/cert_sha256
-
-taskkill /f /im hysteria.exe >nul 2>&1
-cd /d "%~dp0hysteria"
-
-(
-echo server: realm://public@realm.hy2.io/%REALM%
-echo auth: %AUTH%
-echo tls:
-echo   insecure: true
-echo   pinSHA256: %PIN%
-echo socks5:
-echo   listen: 127.0.0.1:25002
-) > tunnel.yaml
-
-echo Starting Hysteria2 P2P...
-start /b hysteria.exe client -c tunnel.yaml > tunnel.log 2>&1
-timeout /t 3 /nobreak >nul
-echo SOCKS5: 127.0.0.1:25002
-pause
-```
-
-3. **使用**：双击运行 → 自动打洞建立 P2P 直连，应用配置 SOCKS5 `127.0.0.1:25002` 即可；再次双击同一脚本即停止隧道。
+> 📖 **进阶配置与脚本**：
+> - 自建牵线服务器操作、Windows 一键批处理脚本及客户端配置，详见 **[HYP2P 进阶与客户端配置 (docs/hyp2p-client.md)](docs/hyp2p-client.md)**。
+> - NAT 打洞限制与 IPv6 优化、Scheme 选型判据见 [原理与避坑清单](docs/pitfalls.md#二hyp2p-的两个硬前提)。
 
 ---
 
@@ -213,8 +163,9 @@ vps -h       # 查看帮助说明
 
 ---
 
-## 深入文档与原理解析
+## 深入文档
 
+- **[HYP2P 进阶与客户端配置 (docs/hyp2p-client.md)](docs/hyp2p-client.md)** —— 自建牵线服务器 (hysteria-realm-server) 部署、Windows 一键批处理脚本模板与使用。
 - **[原理与避坑清单 (docs/pitfalls.md)](docs/pitfalls.md)** —— 涵盖 EXPOSE 端口路由机制、HYP2P 持久化与 NAT 限制、Realm 协议 Scheme 判据、`vps` 探针无 TTY 死循环防范等底层原理与实踩记录。
 
 ---
